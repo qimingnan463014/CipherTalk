@@ -219,6 +219,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getMessagesByDate: (sessionId: string, targetTimestamp: number, limit?: number) =>
       ipcRenderer.invoke('chat:getMessagesByDate', sessionId, targetTimestamp, limit),
     getMessage: (sessionId: string, localId: number) => ipcRenderer.invoke('chat:getMessage', sessionId, localId),
+    searchGlobalMessages: (payload: {
+      keyword: string
+      startTime?: number
+      endTime?: number
+      sessionIds?: string[]
+      excludeSessionIds?: string[]
+      limit?: number
+    }) => ipcRenderer.invoke('chat:searchGlobalMessages', payload),
+    getMessagesInRange: (payload: {
+      startTime: number
+      endTime: number
+      sessionIds?: string[]
+      excludeSessionIds?: string[]
+      limit?: number
+    }) => ipcRenderer.invoke('chat:getMessagesInRange', payload),
     getDatesWithMessages: (sessionId: string, year: number, month: number) =>
       ipcRenderer.invoke('chat:getDatesWithMessages', sessionId, year, month),
     onSessionsUpdated: (callback: (sessions: any[]) => void) => {
@@ -354,6 +369,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onSummaryChunk: (callback: (chunk: string) => void) => {
       ipcRenderer.on('ai:summaryChunk', (_, chunk) => callback(chunk))
       return () => ipcRenderer.removeAllListeners('ai:summaryChunk')
+    },
+    assistantChat: (payload: {
+      messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+      options?: {
+        provider?: string
+        apiKey?: string
+        model?: string
+        temperature?: number
+        maxTokens?: number
+        enableThinking?: boolean
+      }
+    }) => ipcRenderer.invoke('ai:assistantChat', payload),
+    onAssistantChunk: (callback: (chunk: string) => void) => {
+      ipcRenderer.on('ai:assistantChunk', (_, chunk) => callback(chunk))
+      return () => ipcRenderer.removeAllListeners('ai:assistantChunk')
     }
   }
 })

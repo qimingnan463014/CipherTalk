@@ -1794,6 +1794,35 @@ function registerIpcHandlers() {
     return result
   })
 
+  ipcMain.handle('chat:searchGlobalMessages', async (_, payload: {
+    keyword: string
+    startTime?: number
+    endTime?: number
+    sessionIds?: string[]
+    excludeSessionIds?: string[]
+    limit?: number
+  }) => {
+    const result = await chatService.searchGlobalMessages(payload)
+    if (!result.success) {
+      logService?.warn('Chat', '全局搜索失败', { error: result.error })
+    }
+    return result
+  })
+
+  ipcMain.handle('chat:getMessagesInRange', async (_, payload: {
+    startTime: number
+    endTime: number
+    sessionIds?: string[]
+    excludeSessionIds?: string[]
+    limit?: number
+  }) => {
+    const result = await chatService.getMessagesInRange(payload)
+    if (!result.success) {
+      logService?.warn('Chat', '时间范围查询失败', { error: result.error })
+    }
+    return result
+  })
+
   // 导出相关
   ipcMain.handle('export:exportSessions', async (event, sessionIds: string[], outputDir: string, options: ExportOptions) => {
     return exportService.exportSessions(sessionIds, outputDir, options, (progress) => {
@@ -2798,6 +2827,34 @@ function registerIpcHandlers() {
     } catch (e) {
       console.error('[AI] 生成摘要失败:', e)
       logService?.error('AI', '生成摘要失败', { error: String(e) })
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:assistantChat', async (event, payload: {
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+    options?: {
+      provider?: string
+      apiKey?: string
+      model?: string
+      temperature?: number
+      maxTokens?: number
+      enableThinking?: boolean
+    }
+  }) => {
+    try {
+      const { aiService } = await import('./services/ai/aiService')
+      await aiService.streamChat(
+        payload.messages,
+        payload.options || {},
+        (chunk: string) => {
+          event.sender.send('ai:assistantChunk', chunk)
+        }
+      )
+      return { success: true }
+    } catch (e) {
+      console.error('[AI] 助理对话失败:', e)
+      logService?.error('AI', '助理对话失败', { error: String(e) })
       return { success: false, error: String(e) }
     }
   })

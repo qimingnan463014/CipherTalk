@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, MessageSquare, BarChart3, Users, FileText, Database, Settings, SquareChevronLeft, SquareChevronRight, Download } from 'lucide-react'
+import { Home, MessageSquare, BarChart3, Users, FileText, Database, Settings, SquareChevronLeft, SquareChevronRight, Download, Bot } from 'lucide-react'
 import './Sidebar.scss'
 
 function Sidebar() {
@@ -49,6 +49,16 @@ function Sidebar() {
           <span className="nav-icon"><MessageSquare size={20} /></span>
           <span className="nav-label">聊天查看</span>
         </button>
+
+        {/* AI 助理 */}
+        <NavLink
+          to="/assistant"
+          className={`nav-item ${isActive('/assistant') ? 'active' : ''}`}
+          title={collapsed ? 'AI 助理' : undefined}
+        >
+          <span className="nav-icon"><Bot size={20} /></span>
+          <span className="nav-label">AI 助理</span>
+        </NavLink>
 
         {/* 私聊分析 */}
         <NavLink

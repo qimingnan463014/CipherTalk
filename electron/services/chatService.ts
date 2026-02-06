@@ -64,6 +64,19 @@ export interface Message {
   chatRecordList?: ChatRecordItem[] // 聊天记录列表 (Type 19)
 }
 
+export interface AssistantMessage {
+  sessionId: string
+  localId: number
+  serverId: number
+  localType: number
+  createTime: number
+  sortSeq: number
+  isSend: number | null
+  senderUsername: string | null
+  parsedContent: string
+  rawContent: string
+}
+
 export interface ChatRecordItem {
   datatype: number
   datadesc?: string
@@ -1007,6 +1020,85 @@ class ChatService extends EventEmitter {
     return stmt
   }
 
+  private getMyRowIdForDb(
+    db: Database.Database,
+    dbPath: string,
+    myWxid: string | null,
+    cleanedMyWxid: string,
+    hasName2IdTable: boolean
+  ): number | null {
+    if (!myWxid || !hasName2IdTable) return null
+
+    const cacheKeyOriginal = `${dbPath}:${myWxid}`
+    const cachedRowIdOriginal = this.myRowIdCache.get(cacheKeyOriginal)
+    if (cachedRowIdOriginal !== undefined) {
+      return cachedRowIdOriginal
+    }
+
+    const row = db.prepare('SELECT rowid FROM Name2Id WHERE user_name = ?').get(myWxid) as any
+    if (row?.rowid) {
+      this.myRowIdCache.set(cacheKeyOriginal, row.rowid)
+      return row.rowid
+    }
+
+    if (cleanedMyWxid && cleanedMyWxid !== myWxid) {
+      const cacheKeyCleaned = `${dbPath}:${cleanedMyWxid}`
+      const cachedRowIdCleaned = this.myRowIdCache.get(cacheKeyCleaned)
+      if (cachedRowIdCleaned !== undefined) {
+        return cachedRowIdCleaned
+      }
+
+      const row2 = db.prepare('SELECT rowid FROM Name2Id WHERE user_name = ?').get(cleanedMyWxid) as any
+      const rowId = row2?.rowid ?? null
+      this.myRowIdCache.set(cacheKeyCleaned, rowId)
+      return rowId
+    }
+
+    this.myRowIdCache.set(cacheKeyOriginal, null)
+    return null
+  }
+
+  private buildAssistantMessage(row: any, sessionId: string): AssistantMessage {
+    const content = this.decodeMessageContent(row.message_content, row.compress_content)
+    const localType = row.local_type || row.type || 1
+    const isSend = row.computed_is_send ?? row.is_send ?? null
+
+    return {
+      sessionId,
+      localId: row.local_id || 0,
+      serverId: row.server_id || 0,
+      localType,
+      createTime: row.create_time || 0,
+      sortSeq: row.sort_seq || 0,
+      isSend,
+      senderUsername: row.sender_username || null,
+      parsedContent: this.parseMessageContent(content, localType),
+      rawContent: content
+    }
+  }
+
+  private async resolveTargetSessions(
+    sessionIds?: string[],
+    excludeSessionIds?: string[]
+  ): Promise<string[]> {
+    if (sessionIds && sessionIds.length > 0) {
+      return sessionIds
+    }
+
+    const sessionsResult = await this.getSessions()
+    if (!sessionsResult.success || !sessionsResult.sessions) {
+      return []
+    }
+
+    const allSessions = sessionsResult.sessions.map(session => session.username)
+    if (!excludeSessionIds || excludeSessionIds.length === 0) {
+      return allSessions
+    }
+
+    const excludeSet = new Set(excludeSessionIds)
+    return allSessions.filter(sessionId => !excludeSet.has(sessionId))
+  }
+
   /**
    * 获取消息列表（支持跨多个数据库合并，已优化）
    */
@@ -1618,6 +1710,211 @@ class ChatService extends EventEmitter {
       return { success: true, messages, targetIndex: 0 }
     } catch (e) {
       console.error('ChatService: 按日期获取消息失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
+   * 全局搜索消息（跨会话）
+   */
+  async searchGlobalMessages(options: {
+    keyword: string
+    startTime?: number
+    endTime?: number
+    sessionIds?: string[]
+    excludeSessionIds?: string[]
+    limit?: number
+  }): Promise<{ success: boolean; results?: AssistantMessage[]; error?: string }> {
+    try {
+      if (!this.dbDir) {
+        const connectResult = await this.connect()
+        if (!connectResult.success) {
+          return { success: false, error: connectResult.error || '数据库未连接' }
+        }
+      }
+
+      const keyword = options.keyword?.trim()
+      if (!keyword) {
+        return { success: true, results: [] }
+      }
+
+      const limit = options.limit ?? 200
+      const targetSessions = await this.resolveTargetSessions(options.sessionIds, options.excludeSessionIds)
+      if (targetSessions.length === 0) {
+        return { success: true, results: [] }
+      }
+
+      const perSessionLimit = Math.min(200, Math.max(20, Math.ceil(limit / targetSessions.length) + 20))
+      const allResults: AssistantMessage[] = []
+      const searchTerm = `%${keyword}%`
+
+      const myWxid = this.configService.get('myWxid')
+      const cleanedMyWxid = myWxid ? this.cleanAccountDirName(myWxid) : ''
+
+      for (const sessionId of targetSessions) {
+        const dbTablePairs = this.findSessionTables(sessionId)
+        if (dbTablePairs.length === 0) continue
+
+        for (const { db, tableName, dbPath } of dbTablePairs) {
+          try {
+            const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
+            const myRowId = this.getMyRowIdForDb(db, dbPath, myWxid, cleanedMyWxid, hasName2IdTable)
+
+            const conditions: string[] = []
+            const params: any[] = []
+
+            conditions.push('(m.message_content LIKE ? OR m.compress_content LIKE ?)')
+            params.push(searchTerm, searchTerm)
+
+            if (options.startTime && options.endTime) {
+              conditions.push('m.create_time BETWEEN ? AND ?')
+              params.push(options.startTime, options.endTime)
+            } else if (options.startTime) {
+              conditions.push('m.create_time >= ?')
+              params.push(options.startTime)
+            } else if (options.endTime) {
+              conditions.push('m.create_time <= ?')
+              params.push(options.endTime)
+            }
+
+            let sql = ''
+            if (hasName2IdTable && myRowId !== null) {
+              sql = `SELECT m.*,
+                     CASE WHEN m.real_sender_id = ? THEN 1 ELSE 0 END AS computed_is_send,
+                     n.user_name AS sender_username
+                     FROM ${tableName} m
+                     LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+                     WHERE ${conditions.join(' AND ')}
+                     ORDER BY m.create_time DESC, m.sort_seq DESC
+                     LIMIT ?`
+              const rows = db.prepare(sql).all(myRowId, ...params, perSessionLimit) as any[]
+              rows.forEach(row => allResults.push(this.buildAssistantMessage(row, sessionId)))
+            } else if (hasName2IdTable) {
+              sql = `SELECT m.*, n.user_name AS sender_username
+                     FROM ${tableName} m
+                     LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+                     WHERE ${conditions.join(' AND ')}
+                     ORDER BY m.create_time DESC, m.sort_seq DESC
+                     LIMIT ?`
+              const rows = db.prepare(sql).all(...params, perSessionLimit) as any[]
+              rows.forEach(row => allResults.push(this.buildAssistantMessage(row, sessionId)))
+            } else {
+              sql = `SELECT * FROM ${tableName}
+                     WHERE ${conditions.join(' AND ')}
+                     ORDER BY create_time DESC, sort_seq DESC
+                     LIMIT ?`
+              const rows = db.prepare(sql).all(...params, perSessionLimit) as any[]
+              rows.forEach(row => allResults.push(this.buildAssistantMessage(row, sessionId)))
+            }
+          } catch (e) {
+            console.error('ChatService: 全局搜索查询失败:', e)
+          }
+        }
+      }
+
+      const seen = new Set<string>()
+      const deduped = allResults.filter(msg => {
+        const key = `${msg.serverId}-${msg.localId}-${msg.createTime}-${msg.sortSeq}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+
+      deduped.sort((a, b) => b.createTime - a.createTime || b.sortSeq - a.sortSeq)
+
+      return { success: true, results: deduped.slice(0, limit) }
+    } catch (e) {
+      console.error('ChatService: 全局搜索失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
+   * 获取指定时间范围内的消息（跨会话）
+   */
+  async getMessagesInRange(options: {
+    startTime: number
+    endTime: number
+    sessionIds?: string[]
+    excludeSessionIds?: string[]
+    limit?: number
+  }): Promise<{ success: boolean; messages?: AssistantMessage[]; error?: string }> {
+    try {
+      if (!this.dbDir) {
+        const connectResult = await this.connect()
+        if (!connectResult.success) {
+          return { success: false, error: connectResult.error || '数据库未连接' }
+        }
+      }
+
+      const limit = options.limit ?? 2000
+      const targetSessions = await this.resolveTargetSessions(options.sessionIds, options.excludeSessionIds)
+      if (targetSessions.length === 0) {
+        return { success: true, messages: [] }
+      }
+
+      const perSessionLimit = Math.min(500, Math.max(50, Math.ceil(limit / targetSessions.length) + 50))
+      const allMessages: AssistantMessage[] = []
+
+      const myWxid = this.configService.get('myWxid')
+      const cleanedMyWxid = myWxid ? this.cleanAccountDirName(myWxid) : ''
+
+      for (const sessionId of targetSessions) {
+        const dbTablePairs = this.findSessionTables(sessionId)
+        if (dbTablePairs.length === 0) continue
+
+        for (const { db, tableName, dbPath } of dbTablePairs) {
+          try {
+            const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
+            const myRowId = this.getMyRowIdForDb(db, dbPath, myWxid, cleanedMyWxid, hasName2IdTable)
+
+            if (hasName2IdTable && myRowId !== null) {
+              const sql = `SELECT m.*,
+                           CASE WHEN m.real_sender_id = ? THEN 1 ELSE 0 END AS computed_is_send,
+                           n.user_name AS sender_username
+                           FROM ${tableName} m
+                           LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+                           WHERE m.create_time BETWEEN ? AND ?
+                           ORDER BY m.create_time ASC, m.sort_seq ASC
+                           LIMIT ?`
+              const rows = db.prepare(sql).all(myRowId, options.startTime, options.endTime, perSessionLimit) as any[]
+              rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
+            } else if (hasName2IdTable) {
+              const sql = `SELECT m.*, n.user_name AS sender_username
+                           FROM ${tableName} m
+                           LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+                           WHERE m.create_time BETWEEN ? AND ?
+                           ORDER BY m.create_time ASC, m.sort_seq ASC
+                           LIMIT ?`
+              const rows = db.prepare(sql).all(options.startTime, options.endTime, perSessionLimit) as any[]
+              rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
+            } else {
+              const sql = `SELECT * FROM ${tableName}
+                           WHERE create_time BETWEEN ? AND ?
+                           ORDER BY create_time ASC, sort_seq ASC
+                           LIMIT ?`
+              const rows = db.prepare(sql).all(options.startTime, options.endTime, perSessionLimit) as any[]
+              rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
+            }
+          } catch (e) {
+            console.error('ChatService: 时间范围查询失败:', e)
+          }
+        }
+      }
+
+      const seen = new Set<string>()
+      const deduped = allMessages.filter(msg => {
+        const key = `${msg.serverId}-${msg.localId}-${msg.createTime}-${msg.sortSeq}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+
+      deduped.sort((a, b) => a.createTime - b.createTime || a.sortSeq - b.sortSeq)
+
+      return { success: true, messages: deduped.slice(0, limit) }
+    } catch (e) {
+      console.error('ChatService: 获取时间范围消息失败:', e)
       return { success: false, error: String(e) }
     }
   }
