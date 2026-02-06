@@ -1,6 +1,19 @@
 import type { ChatSession, Message, Contact, ContactInfo } from './models'
 import type { SummaryResult } from './ai'
 
+export interface AssistantMessage {
+  sessionId: string
+  localId: number
+  serverId: number
+  localType: number
+  createTime: number
+  sortSeq: number
+  isSend: number | null
+  senderUsername: string | null
+  parsedContent: string
+  rawContent: string
+}
+
 export interface ElectronAPI {
   window: {
     minimize: () => void
@@ -252,6 +265,29 @@ export interface ElectronAPI {
       error?: string
     }>
     getMessage: (sessionId: string, localId: number) => Promise<{ success: boolean; message?: Message; error?: string }>
+    searchGlobalMessages: (payload: {
+      keyword: string
+      startTime?: number
+      endTime?: number
+      sessionIds?: string[]
+      excludeSessionIds?: string[]
+      limit?: number
+    }) => Promise<{
+      success: boolean
+      results?: AssistantMessage[]
+      error?: string
+    }>
+    getMessagesInRange: (payload: {
+      startTime: number
+      endTime: number
+      sessionIds?: string[]
+      excludeSessionIds?: string[]
+      limit?: number
+    }) => Promise<{
+      success: boolean
+      messages?: AssistantMessage[]
+      error?: string
+    }>
     getDatesWithMessages: (sessionId: string, year: number, month: number) => Promise<{
       success: boolean
       dates?: string[]
@@ -656,6 +692,21 @@ export interface ElectronAPI {
       error?: string
     }>
     onSummaryChunk: (callback: (chunk: string) => void) => () => void
+    assistantChat: (payload: {
+      messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+      options?: {
+        provider?: string
+        apiKey?: string
+        model?: string
+        temperature?: number
+        maxTokens?: number
+        enableThinking?: boolean
+      }
+    }) => Promise<{
+      success: boolean
+      error?: string
+    }>
+    onAssistantChunk: (callback: (chunk: string) => void) => () => void
   }
 }
 
