@@ -3,7 +3,7 @@ import { join } from 'path'
 import { readFileSync, existsSync, mkdirSync } from 'fs'
 import { autoUpdater } from 'electron-updater'
 import { DatabaseService } from './services/database'
-
+import { assistantReportService } from './services/assistantReportService'
 import { wechatDecryptService } from './services/decryptService'
 import { ConfigService } from './services/config'
 import { wxKeyService } from './services/wxKeyService'
