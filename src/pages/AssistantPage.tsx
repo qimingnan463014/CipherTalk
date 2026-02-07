@@ -8,7 +8,6 @@ import { getAiEnableThinking, getAiModel, getAiProvider } from '../services/conf
 import { getAIProviders } from '../types/ai'
 
 import type { AssistantMessage } from '../types/assistant'
-main
 import './AssistantPage.scss'
 
 type FilterMode = 'all' | 'whitelist' | 'blacklist'
@@ -26,7 +25,6 @@ const assistantSystemPrompt = `你是 CipherTalk 的个人业务助理，擅长�
 function formatDateInput(date: Date) {
 
   return date.toISOString().slice(0, 10)
- main
 }
 
 function formatTime(timestamp: number) {
@@ -75,7 +73,6 @@ function AssistantPage() {
   const [aiProviderId, setAiProviderId] = useState('')
   const [enableThinking, setEnableThinking] = useState(true)
 
- main
   useEffect(() => {
     if (sessions.length > 0) return
 
@@ -105,7 +102,6 @@ function AssistantPage() {
     loadProvider()
     loadThinkingSetting()
   }, [])
- main
   const sessionNameMap = useMemo(() => {
     return new Map(sessions.map((session) => [session.username, session.displayName || session.username]))
   }, [sessions])
@@ -159,7 +155,6 @@ function AssistantPage() {
 
     const startTime = searchStartDate ? Math.floor(new Date(`${searchStartDate}T00:00:00`).getTime() / 1000) : undefined
     const endTime = searchEndDate ? Math.floor(new Date(`${searchEndDate}T23:59:59`).getTime() / 1000) : undefined
- main
 
     try {
       const result = await window.electronAPI.chat.searchGlobalMessages({
@@ -192,7 +187,7 @@ function AssistantPage() {
     try {
 
       const startTime = Math.floor(new Date(`${reportDate}T00:00:00`).getTime() / 1000)
-      const endTime = Math.floor(new Date(`${reportDate}T23:59:59`).getTime() / 1000) main
+      const endTime = Math.floor(new Date(`${reportDate}T23:59:59`).getTime() / 1000) 
 
       const result = await window.electronAPI.chat.getMessagesInRange({
         startTime,
@@ -209,7 +204,6 @@ function AssistantPage() {
       }
 
       const messages = result.messages || []
- main
       setReportMessages(messages)
       setReportPrompt(buildDailyPrompt(reportDate, messages, sessionNameMap))
     } catch (e) {
@@ -304,7 +298,6 @@ function AssistantPage() {
     }
   }
 
- main
   return (
     <div className="assistant-page">
       <header className="assistant-header">
@@ -481,7 +474,6 @@ function AssistantPage() {
               </div>
             </div>
           </section>
- main
         </div>
 
         <div className="assistant-panel assistant-panel--right">
