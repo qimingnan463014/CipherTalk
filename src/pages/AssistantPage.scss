@@ -97,6 +97,7 @@
   flex-direction: column;
   gap: 20px;
   overflow: hidden;
+  min-height: 0;
 }
 
 .assistant-panel--left {
@@ -105,7 +106,8 @@
 }
 
 .assistant-panel--right {
-  overflow: hidden;
+  overflow: visible;
+  min-height: 0;
 }
 
 .assistant-card {
@@ -188,27 +190,75 @@
   margin-left: auto;
 }
 
-.assistant-session-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
-  max-height: 220px;
+.assistant-session-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 280px;
   overflow-y: auto;
   padding-right: 4px;
 }
 
-.assistant-session-list label {
+.assistant-session-group {
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  background: var(--bg-color);
+  overflow: hidden;
+}
+
+.assistant-session-group-header {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.assistant-session-group-header svg {
+  transition: transform 0.2s ease;
+}
+
+.assistant-session-group-header svg.collapsed {
+  transform: rotate(-90deg);
+}
+
+.assistant-session-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.assistant-session-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px 12px;
+}
+
+.assistant-session-group-body.collapsed {
+  display: none;
+}
+
+.assistant-session-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px;
+  padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid transparent;
   cursor: pointer;
   font-size: 13px;
+  background: var(--card-bg-color);
 }
 
-.assistant-session-list label.selected {
+.assistant-session-item.selected {
   border-color: var(--primary-color);
   background: rgba(24, 144, 255, 0.08);
 }
@@ -344,10 +394,12 @@
   resize: vertical;
 }
 
- main
 .assistant-chat {
   flex: 1;
   height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .assistant-chat-body {
@@ -357,7 +409,7 @@
   flex-direction: column;
   gap: 16px;
   padding-right: 4px;
-  min-height: 320px;
+  min-height: 0;
 }
 
 .assistant-chat-message {
@@ -404,6 +456,33 @@
   flex: 1;
   min-height: 80px;
   resize: vertical;
+}
+
+.assistant-chat-search {
+  border-top: 1px solid var(--border-color);
+  margin-top: 12px;
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.assistant-chat-search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.assistant-chat-search-header h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-color);
+}
+
+.assistant-result-list--chat {
+  max-height: 220px;
 }
 
 .assistant-error {
