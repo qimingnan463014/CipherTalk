@@ -109,7 +109,7 @@ const defaults: ConfigSchema = {
   aiSummaryDetail: 'normal',
   aiEnableCache: true,
   aiEnableThinking: true,  // 默认显示思考过程
-  aiMessageLimit: 3000     // 默认3000条，用户可调至5000
+  aiMessageLimit: 3000,     // 默认3000条，用户可调至5000
   assistantSchedule: {
     enabled: false,
     time: '03:00',
