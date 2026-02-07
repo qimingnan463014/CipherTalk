@@ -2861,7 +2861,6 @@ function registerIpcHandlers() {
       return { success: false, error: String(e) }
     }
   })
-  main
 }
 
 // 主窗口引用
