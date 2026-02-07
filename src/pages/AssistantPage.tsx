@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, CalendarRange, ClipboardCopy, Filter, ListTodo, Search, Send, Sparkles, ArrowLeft } from 'lucide-react'
+import { Bot, CalendarRange, ChevronDown, ClipboardCopy, Filter, ListTodo, Search, Send, Sparkles, ArrowLeft } from 'lucide-react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useChatStore } from '../stores/chatStore'
@@ -18,6 +18,13 @@ type ChatMessage = {
   content: string
   createdAt: number
   isStreaming?: boolean
+}
+
+type SearchIntent = {
+  keyword: string
+  startTime?: number
+  endTime?: number
+  summary: string
 }
 
 const assistantSystemPrompt = `你是 CipherTalk 的个人业务助理，擅长从聊天记录和用户指令中提炼关键信息、输出日报总结、列出待办与风险提醒。请始终使用中文输出，结构清晰，优先使用要点列表与表格。`
@@ -39,7 +46,72 @@ function buildDailyPrompt(date: string, messages: AssistantMessage[], sessionNam
     return `[${formatTime(msg.createTime)}] ${sessionName} · ${sender}: ${content}`
   })
 
-  return `你是我的个人业务助理，请根据以下聊天记录生成【${date}】的工作日报，并输出：\n\n1. 今日关键进展（按客户/项目/群组归类）\n2. 重要决策/结论\n3. 待办清单（包含负责人、截止时间，如未明确则标注待确认）\n4. 风险/异常点与需要跟进的问题\n\n要求：\n- 只基于记录事实，不要臆测\n- 无价值寒暄可忽略\n- 输出清晰的标题与列表\n\n聊天记录：\n${lines.join('\n')}`
+  const historyText = lines.length > 0 ? lines.join('\n') : '（当日未检索到可用聊天记录）'
+
+  return `你是我的个人业务助理，请根据以下聊天记录生成【${date}】的工作日报，并输出：\n\n1. 今日关键进展（按客户/项目/群组归类）\n2. 重要决策/结论\n3. 待办清单（包含负责人、截止时间，如未明确则标注待确认）\n4. 风险/异常点与需要跟进的问题\n\n要求：\n- 只基于记录事实，不要臆测\n- 无价值寒暄可忽略\n- 输出清晰的标题与列表\n\n聊天记录：\n${historyText}`
+}
+
+function resolveRelativeRange(query: string) {
+  const rangePatterns = [
+    { regex: /(最近|近)一年|一年内/, days: 365, label: '最近一年' },
+    { regex: /(最近|近)半年|半年内/, days: 182, label: '最近半年' },
+    { regex: /(最近|近)(三|3)个月|(三|3)个月内/, days: 90, label: '最近三个月' },
+    { regex: /(最近|近)(两|2)个月|(两|2)个月内/, days: 60, label: '最近两个月' },
+    { regex: /(最近|近)(一|1)个月|(一|1)个月内/, days: 30, label: '最近一个月' },
+    { regex: /(最近|近)一周|(最近|近)7天/, days: 7, label: '最近一周' },
+    { regex: /(最近|近)30天/, days: 30, label: '最近30天' },
+    { regex: /(最近|近)90天/, days: 90, label: '最近90天' },
+    { regex: /(最近|近)180天/, days: 180, label: '最近180天' }
+  ]
+
+  for (const pattern of rangePatterns) {
+    if (pattern.regex.test(query)) {
+      const endTime = Math.floor(Date.now() / 1000)
+      const startTime = endTime - pattern.days * 24 * 60 * 60
+      return { startTime, endTime, label: pattern.label }
+    }
+  }
+
+  return null
+}
+
+function normalizeSearchKeyword(query: string) {
+  const keywords = ['转账', '交易', '付款', '打款', '汇款', '收款', '对账', '发票', '合同', '报价', '欠款', '报销', '退款', '物流', '发货', '签约', '开票']
+  const matched = keywords.filter(keyword => query.includes(keyword))
+  if (matched.length > 0) {
+    return Array.from(new Set(matched)).join(' ')
+  }
+
+  const stripped = query
+    .replace(/(最近|近)(一年|半年|三个月|两个月|一个月|一周|7天|30天|90天|180天)/g, '')
+    .replace(/(所有|全部|相关|有关|关于|的)?(聊天记录|消息|记录)/g, '')
+    .replace(/(显示|查找|搜索|查询|帮我|帮忙|列出|获取|看看)/g, '')
+    .trim()
+
+  return stripped
+}
+
+function detectSearchIntent(query: string): SearchIntent | null {
+  const cleaned = query.trim()
+  if (!cleaned) return null
+
+  const mentionsMessages = /(聊天记录|消息|记录)/.test(cleaned)
+  const mentionsSearch = /(搜索|查找|查询|显示|列出|获取|看看)/.test(cleaned)
+  if (!mentionsMessages && !mentionsSearch) return null
+
+  const keyword = normalizeSearchKeyword(cleaned)
+  if (!keyword) return null
+
+  const range = resolveRelativeRange(cleaned)
+  const summaryParts = [`关键词「${keyword}」`]
+  if (range?.label) summaryParts.push(range.label)
+
+  return {
+    keyword,
+    startTime: range?.startTime,
+    endTime: range?.endTime,
+    summary: summaryParts.join(' · ')
+  }
 }
 
 function AssistantPage() {
@@ -48,6 +120,8 @@ function AssistantPage() {
   const [sessionQuery, setSessionQuery] = useState('')
   const [filterMode, setFilterMode] = useState<FilterMode>('all')
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
+  const [friendGroupCollapsed, setFriendGroupCollapsed] = useState(false)
+  const [groupGroupCollapsed, setGroupGroupCollapsed] = useState(false)
 
   const [searchKeyword, setSearchKeyword] = useState('')
   const [searchStartDate, setSearchStartDate] = useState('')
@@ -67,6 +141,12 @@ function AssistantPage() {
   const [assistantError, setAssistantError] = useState('')
   const [assistantStreaming, setAssistantStreaming] = useState(false)
   const assistantInputRef = useRef<HTMLTextAreaElement | null>(null)
+  const assistantChatBodyRef = useRef<HTMLDivElement | null>(null)
+
+  const [assistantSearchResults, setAssistantSearchResults] = useState<AssistantMessage[]>([])
+  const [assistantSearchLoading, setAssistantSearchLoading] = useState(false)
+  const [assistantSearchError, setAssistantSearchError] = useState('')
+  const [assistantSearchSummary, setAssistantSearchSummary] = useState('')
 
   const [aiProviderName, setAiProviderName] = useState('')
   const [aiModelName, setAiModelName] = useState('')
@@ -106,6 +186,8 @@ function AssistantPage() {
     return new Map(sessions.map((session) => [session.username, session.displayName || session.username]))
   }, [sessions])
 
+  const isGroupChat = (sessionId: string) => sessionId.includes('@chatroom')
+
   const filteredSessions = useMemo(() => {
     const keyword = sessionQuery.trim().toLowerCase()
     if (!keyword) return sessions
@@ -113,6 +195,18 @@ function AssistantPage() {
       (session.displayName || session.username).toLowerCase().includes(keyword)
     )
   }, [sessions, sessionQuery])
+
+  const groupedSessions = useMemo(() => {
+    const friendSessions = filteredSessions.filter(session => !isGroupChat(session.username))
+    const groupSessions = filteredSessions.filter(session => isGroupChat(session.username))
+    return { friendSessions, groupSessions }
+  }, [filteredSessions])
+
+  useEffect(() => {
+    if (assistantChatBodyRef.current) {
+      assistantChatBodyRef.current.scrollTop = assistantChatBodyRef.current.scrollHeight
+    }
+  }, [assistantMessages, assistantSearchResults, assistantSearchLoading])
 
   const toggleSession = (sessionId: string) => {
     setSelectedSessions(prev => {
@@ -215,6 +309,35 @@ function AssistantPage() {
     }
   }
 
+  const runAssistantSearch = async (intent: SearchIntent) => {
+    setAssistantSearchLoading(true)
+    setAssistantSearchError('')
+    setAssistantSearchSummary(intent.summary)
+
+    try {
+      const result = await window.electronAPI.chat.searchGlobalMessages({
+        keyword: intent.keyword,
+        startTime: intent.startTime,
+        endTime: intent.endTime,
+        limit: 200,
+        ...resolveSessionFilterPayload()
+      })
+
+      if (!result.success) {
+        setAssistantSearchError(result.error || '检索失败，请重试')
+        setAssistantSearchResults([])
+        return
+      }
+
+      setAssistantSearchResults(result.results || [])
+    } catch (e) {
+      setAssistantSearchError('检索过程中发生异常')
+      setAssistantSearchResults([])
+    } finally {
+      setAssistantSearchLoading(false)
+    }
+  }
+
   const handleCopyPrompt = async () => {
     if (!reportPrompt) return
     try {
@@ -242,9 +365,15 @@ function AssistantPage() {
     ]
   }
 
-  const handleSendMessage = async () => {
-    const content = assistantInput.trim()
+  const sendAssistantMessage = async (content: string, options?: { enableSearchIntent?: boolean }) => {
     if (!content || assistantStreaming) return
+
+    if (options?.enableSearchIntent) {
+      const intent = detectSearchIntent(content)
+      if (intent) {
+        await runAssistantSearch(intent)
+      }
+    }
 
     const userMessage: ChatMessage = {
       id: `${Date.now()}-user`,
@@ -262,7 +391,6 @@ function AssistantPage() {
     }
 
     setAssistantMessages(prev => [...prev, userMessage, assistantMessage])
-    setAssistantInput('')
     setAssistantError('')
     setAssistantStreaming(true)
 
@@ -296,6 +424,19 @@ function AssistantPage() {
       }))
       setAssistantStreaming(false)
     }
+  }
+
+  const handleSendMessage = async () => {
+    const content = assistantInput.trim()
+    if (!content || assistantStreaming) return
+    await sendAssistantMessage(content, { enableSearchIntent: true })
+    setAssistantInput('')
+  }
+
+  const handleSendReportPrompt = async () => {
+    if (!reportPrompt || assistantStreaming) return
+    await sendAssistantMessage(reportPrompt, { enableSearchIntent: false })
+    setAssistantInput('')
   }
 
   return (
@@ -358,17 +499,59 @@ function AssistantPage() {
                 <button type="button" onClick={handleClearSelection}>清空选择</button>
                 <span>已选 {selectedSessions.size} 个会话</span>
               </div>
-              <div className="assistant-session-list">
-                {filteredSessions.map(session => (
-                  <label key={session.username} className={selectedSessions.has(session.username) ? 'selected' : ''}>
-                    <input
-                      type="checkbox"
-                      checked={selectedSessions.has(session.username)}
-                      onChange={() => toggleSession(session.username)}
-                    />
-                    <span>{session.displayName || session.username}</span>
-                  </label>
-                ))}
+              <div className="assistant-session-groups">
+                <div className="assistant-session-group">
+                  <button
+                    type="button"
+                    className="assistant-session-group-header"
+                    onClick={() => setFriendGroupCollapsed(prev => !prev)}
+                  >
+                    <span>Friend Chats</span>
+                    <span className="assistant-session-count">{groupedSessions.friendSessions.length}</span>
+                    <ChevronDown size={16} className={friendGroupCollapsed ? 'collapsed' : ''} />
+                  </button>
+                  <div className={`assistant-session-group-body ${friendGroupCollapsed ? 'collapsed' : ''}`}>
+                    {groupedSessions.friendSessions.map(session => (
+                      <label key={session.username} className={`assistant-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSessions.has(session.username)}
+                          onChange={() => toggleSession(session.username)}
+                        />
+                        <span>{session.displayName || session.username}</span>
+                      </label>
+                    ))}
+                    {groupedSessions.friendSessions.length === 0 && (
+                      <div className="assistant-empty">暂无匹配的好友会话</div>
+                    )}
+                  </div>
+                </div>
+                <div className="assistant-session-group">
+                  <button
+                    type="button"
+                    className="assistant-session-group-header"
+                    onClick={() => setGroupGroupCollapsed(prev => !prev)}
+                  >
+                    <span>Group Chats</span>
+                    <span className="assistant-session-count">{groupedSessions.groupSessions.length}</span>
+                    <ChevronDown size={16} className={groupGroupCollapsed ? 'collapsed' : ''} />
+                  </button>
+                  <div className={`assistant-session-group-body ${groupGroupCollapsed ? 'collapsed' : ''}`}>
+                    {groupedSessions.groupSessions.map(session => (
+                      <label key={session.username} className={`assistant-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSessions.has(session.username)}
+                          onChange={() => toggleSession(session.username)}
+                        />
+                        <span>{session.displayName || session.username}</span>
+                      </label>
+                    ))}
+                    {groupedSessions.groupSessions.length === 0 && (
+                      <div className="assistant-empty">暂无匹配的群聊会话</div>
+                    )}
+                  </div>
+                </div>
                 {filteredSessions.length === 0 && (
                   <div className="assistant-empty">暂无匹配的会话</div>
                 )}
@@ -462,7 +645,10 @@ function AssistantPage() {
                       <ClipboardCopy size={14} />复制
                     </button>
                     <button type="button" onClick={handleUsePrompt} disabled={!reportPrompt}>
-                      <Send size={14} />发送到助理
+                      <Send size={14} />填入对话框
+                    </button>
+                    <button type="button" onClick={handleSendReportPrompt} disabled={!reportPrompt}>
+                      <Send size={14} />发送到 AI 助理
                     </button>
                   </div>
                 </div>
@@ -482,7 +668,7 @@ function AssistantPage() {
               <Bot size={18} />
               <h2>AI 助理对话</h2>
             </div>
-            <div className="assistant-chat-body">
+            <div className="assistant-chat-body" ref={assistantChatBodyRef}>
               {assistantMessages.length === 0 && (
                 <div className="assistant-empty">
                   输入需求开始对话，支持粘贴日报 Prompt 或直接提问。
@@ -514,6 +700,35 @@ function AssistantPage() {
               <button type="button" onClick={handleSendMessage} disabled={assistantStreaming}>
                 <Send size={18} />发送
               </button>
+            </div>
+            <div className="assistant-chat-search">
+              <div className="assistant-chat-search-header">
+                <h3>检索结果</h3>
+                {assistantSearchSummary && <span>{assistantSearchSummary}</span>}
+              </div>
+              {assistantSearchError && <div className="assistant-error">{assistantSearchError}</div>}
+              <div className="assistant-result-list assistant-result-list--chat">
+                {assistantSearchLoading && <div className="assistant-empty">正在检索聊天记录...</div>}
+                {!assistantSearchLoading && assistantSearchResults.map(result => (
+                  <div key={`assistant-${result.sessionId}-${result.localId}-${result.sortSeq}`} className="assistant-result-item">
+                    <div className="assistant-result-meta">
+                      <span>{sessionNameMap.get(result.sessionId) || result.sessionId}</span>
+                      <span>{result.senderUsername || (result.isSend ? '我' : '未知')} · {formatTime(result.createTime)}</span>
+                    </div>
+                    <div className="assistant-result-content">{result.parsedContent || result.rawContent}</div>
+                    <button
+                      type="button"
+                      className="assistant-link"
+                      onClick={() => window.electronAPI.window.openChatHistoryWindow(result.sessionId, result.localId)}
+                    >
+                      查看上下文
+                    </button>
+                  </div>
+                ))}
+                {!assistantSearchLoading && assistantSearchResults.length === 0 && (
+                  <div className="assistant-empty">暂无检索结果</div>
+                )}
+              </div>
             </div>
           </section>
         </div>
