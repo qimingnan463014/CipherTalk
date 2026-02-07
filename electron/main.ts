@@ -71,6 +71,7 @@ let dbService: DatabaseService | null = null
 
 let configService: ConfigService | null = null
 let logService: LogService | null = null
+let assistantReportManager: ReturnType<typeof assistantReportService> | null = null
 
 // 聊天窗口实例
 let chatWindow: BrowserWindow | null = null
@@ -132,6 +133,8 @@ function createWindow() {
   dbService = new DatabaseService()
 
   logService = new LogService(configService)
+  assistantReportManager = assistantReportService(configService)
+  assistantReportManager.start(chatService, logService)
 
   // 记录应用启动日志
   logService.info('App', '应用启动', { version: app.getVersion() })
@@ -2858,6 +2861,7 @@ function registerIpcHandlers() {
       return { success: false, error: String(e) }
     }
   })
+  main
 }
 
 // 主窗口引用
