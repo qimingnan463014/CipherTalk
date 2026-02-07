@@ -2,6 +2,19 @@ import type { ChatSession, Message, Contact, ContactInfo } from './models'
 import type { SummaryResult } from './ai'
 import type { AssistantMessage, AssistantScheduleConfig, AssistantReportInfo } from './assistant'
 
+export interface AssistantMessage {
+  sessionId: string
+  localId: number
+  serverId: number
+  localType: number
+  createTime: number
+  sortSeq: number
+  isSend: number | null
+  senderUsername: string | null
+  parsedContent: string
+  rawContent: string
+}
+
 export interface ElectronAPI {
   window: {
     minimize: () => void
@@ -694,14 +707,7 @@ export interface ElectronAPI {
       success: boolean
       error?: string
     }>
-    onAssistantChunk: (callback: (chunk: string) => void) => () => void
-  }
-  assistant: {
-    getSchedule: () => Promise<{ success: boolean; schedule?: AssistantScheduleConfig; error?: string }>
-    setSchedule: (schedule: AssistantScheduleConfig) => Promise<{ success: boolean; schedule?: AssistantScheduleConfig; error?: string }>
-    runScheduleNow: (override?: Partial<AssistantScheduleConfig>) => Promise<{ success: boolean; filePath?: string; summaryText?: string; error?: string }>
-    getReports: () => Promise<{ success: boolean; reports?: AssistantReportInfo[]; error?: string }>
-    readReport: (reportId: string) => Promise<{ success: boolean; content?: string; error?: string }>
+    onAssistantChunk: (callback: (chunk: string) => void) => () => voi main
   }
 }
 

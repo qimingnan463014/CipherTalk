@@ -6,7 +6,9 @@ import DOMPurify from 'dompurify'
 import { useChatStore } from '../stores/chatStore'
 import { getAiEnableThinking, getAiModel, getAiProvider } from '../services/config'
 import { getAIProviders } from '../types/ai'
-import type { AssistantMessage, AssistantReportInfo, AssistantScheduleConfig } from '../types/assistant'
+
+import type { AssistantMessage } from '../types/assistant'
+main
 import './AssistantPage.scss'
 
 type FilterMode = 'all' | 'whitelist' | 'blacklist'
@@ -22,20 +24,9 @@ type ChatMessage = {
 const assistantSystemPrompt = `你是 CipherTalk 的个人业务助理，擅长从聊天记录和用户指令中提炼关键信息、输出日报总结、列出待办与风险提醒。请始终使用中文输出，结构清晰，优先使用要点列表与表格。`
 
 function formatDateInput(date: Date) {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
 
-function buildDayRange(dateString: string) {
-  const [year, month, day] = dateString.split('-').map(Number)
-  const start = new Date(year, month - 1, day, 0, 0, 0)
-  const end = new Date(year, month - 1, day, 23, 59, 59)
-  return {
-    startTime: Math.floor(start.getTime() / 1000),
-    endTime: Math.floor(end.getTime() / 1000)
-  }
+  return date.toISOString().slice(0, 10)
+ main
 }
 
 function formatTime(timestamp: number) {
@@ -84,19 +75,7 @@ function AssistantPage() {
   const [aiProviderId, setAiProviderId] = useState('')
   const [enableThinking, setEnableThinking] = useState(true)
 
-  const [scheduleConfig, setScheduleConfig] = useState<AssistantScheduleConfig>({
-    enabled: false,
-    time: '03:00',
-    rangeDays: 1,
-    filterMode: 'all',
-    sessionIds: [],
-    excludeSessionIds: []
-  })
-  const [scheduleSaving, setScheduleSaving] = useState(false)
-  const [scheduleError, setScheduleError] = useState('')
-  const [reports, setReports] = useState<AssistantReportInfo[]>([])
-  const [reportContent, setReportContent] = useState('')
-
+ main
   useEffect(() => {
     if (sessions.length > 0) return
 
@@ -126,26 +105,7 @@ function AssistantPage() {
     loadProvider()
     loadThinkingSetting()
   }, [])
-
-  useEffect(() => {
-    const loadSchedule = async () => {
-      const result = await window.electronAPI.assistant.getSchedule()
-      if (result.success && result.schedule) {
-        setScheduleConfig(result.schedule)
-      }
-    }
-
-    const loadReports = async () => {
-      const result = await window.electronAPI.assistant.getReports()
-      if (result.success && result.reports) {
-        setReports(result.reports)
-      }
-    }
-
-    loadSchedule()
-    loadReports()
-  }, [])
-
+ main
   const sessionNameMap = useMemo(() => {
     return new Map(sessions.map((session) => [session.username, session.displayName || session.username]))
   }, [sessions])
@@ -197,8 +157,9 @@ function AssistantPage() {
     setSearchLoading(true)
     setSearchError('')
 
-    const startTime = searchStartDate ? buildDayRange(searchStartDate).startTime : undefined
-    const endTime = searchEndDate ? buildDayRange(searchEndDate).endTime : undefined
+    const startTime = searchStartDate ? Math.floor(new Date(`${searchStartDate}T00:00:00`).getTime() / 1000) : undefined
+    const endTime = searchEndDate ? Math.floor(new Date(`${searchEndDate}T23:59:59`).getTime() / 1000) : undefined
+ main
 
     try {
       const result = await window.electronAPI.chat.searchGlobalMessages({
@@ -229,7 +190,9 @@ function AssistantPage() {
     setReportError('')
 
     try {
-      const { startTime, endTime } = buildDayRange(reportDate)
+
+      const startTime = Math.floor(new Date(`${reportDate}T00:00:00`).getTime() / 1000)
+      const endTime = Math.floor(new Date(`${reportDate}T23:59:59`).getTime() / 1000) main
 
       const result = await window.electronAPI.chat.getMessagesInRange({
         startTime,
@@ -246,13 +209,7 @@ function AssistantPage() {
       }
 
       const messages = result.messages || []
-      if (messages.length === 0) {
-        setReportError('该日期未找到消息，请调整时间范围或检查过滤条件')
-        setReportMessages([])
-        setReportPrompt('')
-        return
-      }
-
+ main
       setReportMessages(messages)
       setReportPrompt(buildDailyPrompt(reportDate, messages, sessionNameMap))
     } catch (e) {
@@ -347,62 +304,7 @@ function AssistantPage() {
     }
   }
 
-  const handleSaveSchedule = async () => {
-    setScheduleSaving(true)
-    setScheduleError('')
-    try {
-      const payload: AssistantScheduleConfig = {
-        ...scheduleConfig,
-        filterMode,
-        sessionIds: filterMode === 'whitelist' ? Array.from(selectedSessions) : [],
-        excludeSessionIds: filterMode === 'blacklist' ? Array.from(selectedSessions) : []
-      }
-      const result = await window.electronAPI.assistant.setSchedule(payload)
-      if (!result.success || !result.schedule) {
-        setScheduleError(result.error || '保存失败')
-        return
-      }
-      setScheduleConfig(result.schedule)
-    } catch (e) {
-      setScheduleError('保存过程中发生异常')
-    } finally {
-      setScheduleSaving(false)
-    }
-  }
-
-  const handleRunScheduleNow = async () => {
-    setScheduleSaving(true)
-    setScheduleError('')
-    try {
-      const payload: Partial<AssistantScheduleConfig> = {
-        rangeDays: scheduleConfig.rangeDays,
-        filterMode,
-        sessionIds: filterMode === 'whitelist' ? Array.from(selectedSessions) : [],
-        excludeSessionIds: filterMode === 'blacklist' ? Array.from(selectedSessions) : []
-      }
-      const result = await window.electronAPI.assistant.runScheduleNow(payload)
-      if (!result.success) {
-        setScheduleError(result.error || '生成失败')
-        return
-      }
-      const reportsResult = await window.electronAPI.assistant.getReports()
-      if (reportsResult.success && reportsResult.reports) {
-        setReports(reportsResult.reports)
-      }
-    } catch (e) {
-      setScheduleError('生成过程中发生异常')
-    } finally {
-      setScheduleSaving(false)
-    }
-  }
-
-  const handleReadReport = async (reportId: string) => {
-    const result = await window.electronAPI.assistant.readReport(reportId)
-    if (result.success && result.content) {
-      setReportContent(result.content)
-    }
-  }
-
+ main
   return (
     <div className="assistant-page">
       <header className="assistant-header">
@@ -579,78 +481,7 @@ function AssistantPage() {
               </div>
             </div>
           </section>
-
-          <section className="assistant-card">
-            <div className="assistant-card-header">
-              <Sparkles size={18} />
-              <h2>自动总结</h2>
-            </div>
-            <div className="assistant-card-body">
-              <div className="assistant-schedule-row">
-                <label className="assistant-switch">
-                  <input
-                    type="checkbox"
-                    checked={scheduleConfig.enabled}
-                    onChange={(e) => setScheduleConfig(prev => ({ ...prev, enabled: e.target.checked }))}
-                  />
-                  启用每日自动总结
-                </label>
-                <label>
-                  执行时间
-                  <input
-                    type="time"
-                    value={scheduleConfig.time}
-                    onChange={(e) => setScheduleConfig(prev => ({ ...prev, time: e.target.value }))}
-                  />
-                </label>
-                <label>
-                  时间跨度（天）
-                  <input
-                    type="number"
-                    min={1}
-                    max={30}
-                    value={scheduleConfig.rangeDays}
-                    onChange={(e) => setScheduleConfig(prev => ({ ...prev, rangeDays: Number(e.target.value) }))}
-                  />
-                </label>
-              </div>
-              <div className="assistant-filter-hint">
-                当前过滤模式会同步到自动总结：{filterMode === 'all' ? '全部会话' : filterMode === 'whitelist' ? '白名单' : '黑名单'}
-              </div>
-              {scheduleConfig.lastRunDate && (
-                <div className="assistant-filter-hint">上次自动总结：{scheduleConfig.lastRunDate}</div>
-              )}
-              {scheduleError && <div className="assistant-error">{scheduleError}</div>}
-              <div className="assistant-filter-actions">
-                <button type="button" onClick={handleSaveSchedule} disabled={scheduleSaving}>
-                  {scheduleSaving ? '保存中...' : '保存设置'}
-                </button>
-                <button type="button" onClick={handleRunScheduleNow} disabled={scheduleSaving}>
-                  立即生成
-                </button>
-              </div>
-              <div className="assistant-report-list">
-                {reports.slice(0, 5).map(report => (
-                  <button
-                    type="button"
-                    key={report.id}
-                    className="assistant-report-item"
-                    onClick={() => handleReadReport(report.id)}
-                  >
-                    <span>{report.title}</span>
-                    <span>{new Date(report.createdAt).toLocaleString()}</span>
-                  </button>
-                ))}
-                {reports.length === 0 && <div className="assistant-empty">暂无自动总结</div>}
-              </div>
-              <textarea
-                value={reportContent}
-                readOnly
-                className="assistant-report-preview"
-                placeholder="点击上方报告查看内容，支持复制后自行发送或对接接口..."
-              />
-            </div>
-          </section>
+ main
         </div>
 
         <div className="assistant-panel assistant-panel--right">

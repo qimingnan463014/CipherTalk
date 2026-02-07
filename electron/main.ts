@@ -2862,42 +2862,7 @@ function registerIpcHandlers() {
       return { success: false, error: String(e) }
     }
   })
-
-  ipcMain.handle('assistant:getSchedule', async () => {
-    if (!assistantReportManager) {
-      return { success: false, error: '自动总结服务未初始化' }
-    }
-    return { success: true, schedule: assistantReportManager.getSchedule() }
-  })
-
-  ipcMain.handle('assistant:setSchedule', async (_, schedule: any) => {
-    if (!assistantReportManager) {
-      return { success: false, error: '自动总结服务未初始化' }
-    }
-    const updated = assistantReportManager.setSchedule(schedule)
-    return { success: true, schedule: updated }
-  })
-
-  ipcMain.handle('assistant:runScheduleNow', async (_, override?: any) => {
-    if (!assistantReportManager) {
-      return { success: false, error: '自动总结服务未初始化' }
-    }
-    return assistantReportManager.runNow(chatService, logService || undefined, override)
-  })
-
-  ipcMain.handle('assistant:getReports', async () => {
-    if (!assistantReportManager) {
-      return { success: false, error: '自动总结服务未初始化' }
-    }
-    return { success: true, reports: assistantReportManager.getReports() }
-  })
-
-  ipcMain.handle('assistant:readReport', async (_, reportId: string) => {
-    if (!assistantReportManager) {
-      return { success: false, error: '自动总结服务未初始化' }
-    }
-    return assistantReportManager.readReport(reportId)
-  })
+ main
 }
 
 // 主窗口引用

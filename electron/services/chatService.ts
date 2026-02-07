@@ -1102,23 +1102,7 @@ class ChatService extends EventEmitter {
     return allSessions.filter(sessionId => !excludeSet.has(sessionId))
   }
 
-  private resolveTimestampUnit(db: Database.Database, tableName: string, cacheKey: string): 's' | 'ms' {
-    const cached = this.timestampUnitCache.get(cacheKey)
-    if (cached) return cached
-
-    try {
-      const row = db.prepare(`SELECT MAX(create_time) as max_time FROM ${tableName}`).get() as { max_time?: number }
-      const maxTime = row?.max_time || 0
-      const nowSeconds = Math.floor(Date.now() / 1000)
-      const unit: 's' | 'ms' = maxTime > nowSeconds * 100 ? 'ms' : 's'
-      this.timestampUnitCache.set(cacheKey, unit)
-      return unit
-    } catch (e) {
-      this.timestampUnitCache.set(cacheKey, 's')
-      return 's'
-    }
-  }
-
+ main
   /**
    * 获取消息列表（支持跨多个数据库合并，已优化）
    */
@@ -1779,7 +1763,7 @@ class ChatService extends EventEmitter {
           try {
             const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
             const myRowId = this.getMyRowIdForDb(db, dbPath, myWxid, cleanedMyWxid, hasName2IdTable)
-            const unit = this.resolveTimestampUnit(db, tableName, `${dbPath}:${tableName}`)
+ main
 
             const conditions: string[] = []
             const params: any[] = []
@@ -1787,18 +1771,17 @@ class ChatService extends EventEmitter {
             conditions.push('(m.message_content LIKE ? OR m.compress_content LIKE ?)')
             params.push(searchTerm, searchTerm)
 
-            const startTime = options.startTime ? (unit === 'ms' ? options.startTime * 1000 : options.startTime) : undefined
-            const endTime = options.endTime ? (unit === 'ms' ? options.endTime * 1000 : options.endTime) : undefined
 
-            if (startTime && endTime) {
+            if (options.startTime && options.endTime) {
               conditions.push('m.create_time BETWEEN ? AND ?')
-              params.push(startTime, endTime)
-            } else if (startTime) {
+              params.push(options.startTime, options.endTime)
+            } else if (options.startTime) {
               conditions.push('m.create_time >= ?')
-              params.push(startTime)
-            } else if (endTime) {
+              params.push(options.startTime)
+            } else if (options.endTime) {
               conditions.push('m.create_time <= ?')
-              params.push(endTime)
+              params.push(options.endTime)
+ main
             }
 
             let sql = ''
@@ -1891,9 +1874,7 @@ class ChatService extends EventEmitter {
           try {
             const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
             const myRowId = this.getMyRowIdForDb(db, dbPath, myWxid, cleanedMyWxid, hasName2IdTable)
-            const unit = this.resolveTimestampUnit(db, tableName, `${dbPath}:${tableName}`)
-            const startTime = unit === 'ms' ? options.startTime * 1000 : options.startTime
-            const endTime = unit === 'ms' ? options.endTime * 1000 : options.endTime
+ main
 
             if (hasName2IdTable && myRowId !== null) {
               const sql = `SELECT m.*,
@@ -1904,7 +1885,8 @@ class ChatService extends EventEmitter {
                            WHERE m.create_time BETWEEN ? AND ?
                            ORDER BY m.create_time ASC, m.sort_seq ASC
                            LIMIT ?`
-              const rows = db.prepare(sql).all(myRowId, startTime, endTime, perSessionLimit) as any[]
+              const rows = db.prepare(sql).all(myRowId, options.startTime, options.endTime, perSessionLimit) as any[]
+ main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             } else if (hasName2IdTable) {
               const sql = `SELECT m.*, n.user_name AS sender_username
@@ -1913,14 +1895,17 @@ class ChatService extends EventEmitter {
                            WHERE m.create_time BETWEEN ? AND ?
                            ORDER BY m.create_time ASC, m.sort_seq ASC
                            LIMIT ?`
-              const rows = db.prepare(sql).all(startTime, endTime, perSessionLimit) as any[]
+              const rows = db.prepare(sql).all(options.startTime, options.endTime, perSessionLimit) as any[]
+ main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             } else {
               const sql = `SELECT * FROM ${tableName}
                            WHERE create_time BETWEEN ? AND ?
                            ORDER BY create_time ASC, sort_seq ASC
                            LIMIT ?`
-              const rows = db.prepare(sql).all(startTime, endTime, perSessionLimit) as any[]
+
+              const rows = db.prepare(sql).all(options.startTime, options.endTime, perSessionLimit) as any[]
+ main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             }
           } catch (e) {
