@@ -20,6 +20,7 @@ import { exportService, ExportOptions } from './services/exportService'
 import { activationService } from './services/activationService'
 import { LogService } from './services/logService'
 import { videoService } from './services/videoService'
+import { assistantReportService } from './services/assistantReportService'
 import { voiceTranscribeService } from './services/voiceTranscribeService'
 import { voiceTranscribeServiceWhisper } from './services/voiceTranscribeServiceWhisper'
 import { windowsHelloService, WindowsHelloResult } from './services/windowsHelloService'
@@ -71,6 +72,7 @@ let dbService: DatabaseService | null = null
 
 let configService: ConfigService | null = null
 let logService: LogService | null = null
+let assistantReportManager: ReturnType<typeof assistantReportService> | null = null
 
 // 聊天窗口实例
 let chatWindow: BrowserWindow | null = null
@@ -132,6 +134,8 @@ function createWindow() {
   dbService = new DatabaseService()
 
   logService = new LogService(configService)
+  assistantReportManager = assistantReportService(configService)
+  assistantReportManager.start(chatService, logService)
 
   // 记录应用启动日志
   logService.info('App', '应用启动', { version: app.getVersion() })
@@ -1794,6 +1798,35 @@ function registerIpcHandlers() {
     return result
   })
 
+  ipcMain.handle('chat:searchGlobalMessages', async (_, payload: {
+    keyword: string
+    startTime?: number
+    endTime?: number
+    sessionIds?: string[]
+    excludeSessionIds?: string[]
+    limit?: number
+  }) => {
+    const result = await chatService.searchGlobalMessages(payload)
+    if (!result.success) {
+      logService?.warn('Chat', '全局搜索失败', { error: result.error })
+    }
+    return result
+  })
+
+  ipcMain.handle('chat:getMessagesInRange', async (_, payload: {
+    startTime: number
+    endTime: number
+    sessionIds?: string[]
+    excludeSessionIds?: string[]
+    limit?: number
+  }) => {
+    const result = await chatService.getMessagesInRange(payload)
+    if (!result.success) {
+      logService?.warn('Chat', '时间范围查询失败', { error: result.error })
+    }
+    return result
+  })
+
   // 导出相关
   ipcMain.handle('export:exportSessions', async (event, sessionIds: string[], outputDir: string, options: ExportOptions) => {
     return exportService.exportSessions(sessionIds, outputDir, options, (progress) => {
@@ -2800,6 +2833,70 @@ function registerIpcHandlers() {
       logService?.error('AI', '生成摘要失败', { error: String(e) })
       return { success: false, error: String(e) }
     }
+  })
+
+  ipcMain.handle('ai:assistantChat', async (event, payload: {
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+    options?: {
+      provider?: string
+      apiKey?: string
+      model?: string
+      temperature?: number
+      maxTokens?: number
+      enableThinking?: boolean
+    }
+  }) => {
+    try {
+      const { aiService } = await import('./services/ai/aiService')
+      await aiService.streamChat(
+        payload.messages,
+        payload.options || {},
+        (chunk: string) => {
+          event.sender.send('ai:assistantChunk', chunk)
+        }
+      )
+      return { success: true }
+    } catch (e) {
+      console.error('[AI] 助理对话失败:', e)
+      logService?.error('AI', '助理对话失败', { error: String(e) })
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('assistant:getSchedule', async () => {
+    if (!assistantReportManager) {
+      return { success: false, error: '自动总结服务未初始化' }
+    }
+    return { success: true, schedule: assistantReportManager.getSchedule() }
+  })
+
+  ipcMain.handle('assistant:setSchedule', async (_, schedule: any) => {
+    if (!assistantReportManager) {
+      return { success: false, error: '自动总结服务未初始化' }
+    }
+    const updated = assistantReportManager.setSchedule(schedule)
+    return { success: true, schedule: updated }
+  })
+
+  ipcMain.handle('assistant:runScheduleNow', async (_, override?: any) => {
+    if (!assistantReportManager) {
+      return { success: false, error: '自动总结服务未初始化' }
+    }
+    return assistantReportManager.runNow(chatService, logService || undefined, override)
+  })
+
+  ipcMain.handle('assistant:getReports', async () => {
+    if (!assistantReportManager) {
+      return { success: false, error: '自动总结服务未初始化' }
+    }
+    return { success: true, reports: assistantReportManager.getReports() }
+  })
+
+  ipcMain.handle('assistant:readReport', async (_, reportId: string) => {
+    if (!assistantReportManager) {
+      return { success: false, error: '自动总结服务未初始化' }
+    }
+    return assistantReportManager.readReport(reportId)
   })
 }
 

@@ -63,6 +63,17 @@ interface ConfigSchema {
   aiEnableCache: boolean
   aiEnableThinking: boolean  // 是否显示思考过程
   aiMessageLimit: number     // 摘要提取的消息条数限制
+
+  // 助理自动总结
+  assistantSchedule: {
+    enabled: boolean
+    time: string
+    rangeDays: number
+    filterMode: 'all' | 'whitelist' | 'blacklist'
+    sessionIds: string[]
+    excludeSessionIds: string[]
+    lastRunDate?: string
+  }
 }
 
 const defaults: ConfigSchema = {
@@ -98,7 +109,15 @@ const defaults: ConfigSchema = {
   aiSummaryDetail: 'normal',
   aiEnableCache: true,
   aiEnableThinking: true,  // 默认显示思考过程
-  aiMessageLimit: 3000     // 默认3000条，用户可调至5000
+  aiMessageLimit: 3000,    // 默认3000条，用户可调至5000
+  assistantSchedule: {
+    enabled: false,
+    time: '03:00',
+    rangeDays: 1,
+    filterMode: 'all',
+    sessionIds: [],
+    excludeSessionIds: []
+  }
 }
 
 export class ConfigService {

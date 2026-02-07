@@ -1,5 +1,6 @@
 import type { ChatSession, Message, Contact, ContactInfo } from './models'
 import type { SummaryResult } from './ai'
+import type { AssistantMessage, AssistantScheduleConfig, AssistantReportInfo } from './assistant'
 
 export interface ElectronAPI {
   window: {
@@ -252,6 +253,29 @@ export interface ElectronAPI {
       error?: string
     }>
     getMessage: (sessionId: string, localId: number) => Promise<{ success: boolean; message?: Message; error?: string }>
+    searchGlobalMessages: (payload: {
+      keyword: string
+      startTime?: number
+      endTime?: number
+      sessionIds?: string[]
+      excludeSessionIds?: string[]
+      limit?: number
+    }) => Promise<{
+      success: boolean
+      results?: AssistantMessage[]
+      error?: string
+    }>
+    getMessagesInRange: (payload: {
+      startTime: number
+      endTime: number
+      sessionIds?: string[]
+      excludeSessionIds?: string[]
+      limit?: number
+    }) => Promise<{
+      success: boolean
+      messages?: AssistantMessage[]
+      error?: string
+    }>
     getDatesWithMessages: (sessionId: string, year: number, month: number) => Promise<{
       success: boolean
       dates?: string[]
@@ -656,6 +680,28 @@ export interface ElectronAPI {
       error?: string
     }>
     onSummaryChunk: (callback: (chunk: string) => void) => () => void
+    assistantChat: (payload: {
+      messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+      options?: {
+        provider?: string
+        apiKey?: string
+        model?: string
+        temperature?: number
+        maxTokens?: number
+        enableThinking?: boolean
+      }
+    }) => Promise<{
+      success: boolean
+      error?: string
+    }>
+    onAssistantChunk: (callback: (chunk: string) => void) => () => void
+  }
+  assistant: {
+    getSchedule: () => Promise<{ success: boolean; schedule?: AssistantScheduleConfig; error?: string }>
+    setSchedule: (schedule: AssistantScheduleConfig) => Promise<{ success: boolean; schedule?: AssistantScheduleConfig; error?: string }>
+    runScheduleNow: (override?: Partial<AssistantScheduleConfig>) => Promise<{ success: boolean; filePath?: string; summaryText?: string; error?: string }>
+    getReports: () => Promise<{ success: boolean; reports?: AssistantReportInfo[]; error?: string }>
+    readReport: (reportId: string) => Promise<{ success: boolean; content?: string; error?: string }>
   }
 }
 

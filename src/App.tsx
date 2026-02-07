@@ -22,6 +22,7 @@ import BrowserWindowPage from './pages/BrowserWindowPage'
 import SplashPage from './pages/SplashPage'
 import AISummaryWindow from './pages/AISummaryWindow'
 import ChatHistoryPage from './pages/ChatHistoryPage'
+import AssistantPage from './pages/AssistantPage'
 import { useAppStore } from './stores/appStore'
 import { useThemeStore } from './stores/themeStore'
 import { useChatStore } from './stores/chatStore'
@@ -164,6 +165,7 @@ function App() {
   const isAgreementWindow = location.pathname === '/agreement-window'
   const isAISummaryWindow = location.pathname === '/ai-summary-window'
   const isWelcomeWindow = location.pathname === '/welcome-window'
+  const isAssistantPage = location.pathname === '/assistant'
 
   // 启动时自动检查配置并连接数据库
   useEffect(() => {
@@ -425,6 +427,19 @@ function App() {
     )
   }
 
+  if (isAssistantPage) {
+    return (
+      <div className="app-container assistant-layout">
+        <TitleBar />
+        <RouteGuard>
+          <AssistantPage />
+        </RouteGuard>
+        <DecryptProgressOverlay />
+        {isLocked && <LockScreen />}
+      </div>
+    )
+  }
+
   // 主窗口 - 完整布局
   return (
     <div className="app-container">
@@ -458,6 +473,7 @@ function App() {
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/export" element={<ExportPage />} />
               <Route path="/chat-history/:sessionId/:messageId" element={<ChatHistoryPage />} />
+              <Route path="/assistant" element={<AssistantPage />} />
             </Routes>
           </RouteGuard>
         </main>

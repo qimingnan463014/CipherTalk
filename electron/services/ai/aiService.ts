@@ -213,6 +213,44 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
   }
 
   /**
+   * 通用流式对话
+   */
+  async streamChat(
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+    options: {
+      provider?: string
+      apiKey?: string
+      model?: string
+      temperature?: number
+      maxTokens?: number
+      enableThinking?: boolean
+    },
+    onChunk: (chunk: string) => void
+  ): Promise<void> {
+    const providerName = options.provider || this.configService.getAICurrentProvider() || 'zhipu'
+    const providerConfig = this.configService.getAIProviderConfig(providerName)
+    const apiKey = options.apiKey || providerConfig?.apiKey
+
+    if (!apiKey && providerName !== 'ollama') {
+      throw new Error('未配置API密钥')
+    }
+
+    const provider = this.getProvider(providerName, apiKey)
+    const model = options.model || providerConfig?.model
+
+    await provider.streamChat(
+      messages,
+      {
+        model,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        enableThinking: options.enableThinking
+      },
+      onChunk
+    )
+  }
+
+  /**
    * 格式化消息（完全依赖后端解析结果，不重复解析）
    */
   private formatMessages(messages: Message[], contacts: Map<string, Contact>, sessionId: string): string {
