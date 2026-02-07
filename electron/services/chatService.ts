@@ -140,8 +140,6 @@ class ChatService extends EventEmitter {
   private contactColumnsCache: { hasBigHeadUrl: boolean; hasSmallHeadUrl: boolean; selectCols: string[] } | null = null
   // 缓存：头像 base64 数据
   private avatarBase64Cache: Map<string, string> = new Map()
-  // 缓存：消息时间戳单位（秒/毫秒）
-  private timestampUnitCache: Map<string, 's' | 'ms'> = new Map()
   // 标记：head_image.db 是否损坏
   private headImageDbCorrupted: boolean = false
 
@@ -340,7 +338,6 @@ class ChatService extends EventEmitter {
       this.sessionTableCacheTime = 0
       this.knownMessageDbFiles.clear()
       this.avatarBase64Cache.clear()
-      this.timestampUnitCache.clear()
 
       return { success: true }
     } catch (e) {
@@ -1102,7 +1099,6 @@ class ChatService extends EventEmitter {
     return allSessions.filter(sessionId => !excludeSet.has(sessionId))
   }
 
- main
   /**
    * 获取消息列表（支持跨多个数据库合并，已优化）
    */
@@ -1763,14 +1759,12 @@ class ChatService extends EventEmitter {
           try {
             const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
             const myRowId = this.getMyRowIdForDb(db, dbPath, myWxid, cleanedMyWxid, hasName2IdTable)
- main
 
             const conditions: string[] = []
             const params: any[] = []
 
             conditions.push('(m.message_content LIKE ? OR m.compress_content LIKE ?)')
             params.push(searchTerm, searchTerm)
-
 
             if (options.startTime && options.endTime) {
               conditions.push('m.create_time BETWEEN ? AND ?')
@@ -1781,7 +1775,6 @@ class ChatService extends EventEmitter {
             } else if (options.endTime) {
               conditions.push('m.create_time <= ?')
               params.push(options.endTime)
- main
             }
 
             let sql = ''
@@ -1874,7 +1867,6 @@ class ChatService extends EventEmitter {
           try {
             const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
             const myRowId = this.getMyRowIdForDb(db, dbPath, myWxid, cleanedMyWxid, hasName2IdTable)
- main
 
             if (hasName2IdTable && myRowId !== null) {
               const sql = `SELECT m.*,
@@ -1886,7 +1878,6 @@ class ChatService extends EventEmitter {
                            ORDER BY m.create_time ASC, m.sort_seq ASC
                            LIMIT ?`
               const rows = db.prepare(sql).all(myRowId, options.startTime, options.endTime, perSessionLimit) as any[]
- main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             } else if (hasName2IdTable) {
               const sql = `SELECT m.*, n.user_name AS sender_username
@@ -1896,16 +1887,13 @@ class ChatService extends EventEmitter {
                            ORDER BY m.create_time ASC, m.sort_seq ASC
                            LIMIT ?`
               const rows = db.prepare(sql).all(options.startTime, options.endTime, perSessionLimit) as any[]
- main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             } else {
               const sql = `SELECT * FROM ${tableName}
                            WHERE create_time BETWEEN ? AND ?
                            ORDER BY create_time ASC, sort_seq ASC
                            LIMIT ?`
-
               const rows = db.prepare(sql).all(options.startTime, options.endTime, perSessionLimit) as any[]
- main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             }
           } catch (e) {
