@@ -1,5 +1,6 @@
 import type { ChatSession, Message, Contact, ContactInfo } from './models'
 import type { SummaryResult } from './ai'
+import type { AssistantMessage, AssistantScheduleConfig, AssistantReportInfo } from './assistant'
 
 export interface AssistantMessage {
   sessionId: string
@@ -706,7 +707,7 @@ export interface ElectronAPI {
       success: boolean
       error?: string
     }>
-    onAssistantChunk: (callback: (chunk: string) => void) => () => void
+    onAssistantChunk: (callback: (chunk: string) => void) => () => voi main
   }
 }
 
