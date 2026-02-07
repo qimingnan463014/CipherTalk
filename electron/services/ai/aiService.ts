@@ -446,6 +446,59 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
     return `${sessionId}_${timeRangeDays}d_${dayAlignedEnd}`
   }
 
+// =========================================================
+  // 👇👇👇 这是你需要添加的新函数 (已修复 Ollama 报错) 👇👇👇
+  // =========================================================
+  
+  /**
+   * [新增] AI 对话核心方法
+   * 修复了 Ollama 不支持 enableThinking 参数导致的 400 错误
+   */
+  async chat(messages: any[], options: any = {}, onChunk?: (chunk: string) => void) {
+    // 1. 获取配置
+    const config = this.configService.getAIConfig()
+    if (!config.enabled) {
+      throw new Error('AI 服务未启用，请先在设置中开启')
+    }
+
+    // 2. 获取服务商实例
+    const provider = this.getProvider(config.provider)
+    if (!provider) {
+      throw new Error('AI 服务商未初始化')
+    }
+
+    // 3. 准备模型参数
+    const model = config.models[config.provider] || ''
+    
+    // 【核心修复】检查是不是 Ollama
+    const isOllama = config.provider === 'ollama' || provider.constructor.name.toLowerCase().includes('ollama');
+    
+    const chatOptions = {
+      model,
+      temperature: options.temperature ?? 0.7,
+      // ⚠️ 强制修复：如果是 Ollama，绝对不传 enableThinking，防止报 400
+      enableThinking: isOllama ? false : (options.enableThinking ?? true),
+      ...options 
+    }
+
+    // 4. 发起流式对话
+    try {
+      await provider.streamChat(messages, chatOptions, (chunk) => {
+        if (onChunk) onChunk(chunk)
+      })
+    } catch (error: any) {
+      console.error('[AI Service] Chat Error:', error)
+      if (error.message?.includes('400') && error.message?.includes('think')) {
+        throw new Error('本地模型参数错误：请确保已应用 enableThinking=false 修复。')
+      }
+      throw error
+    }
+  }
+  
+  // =========================================================
+  // 👆👆👆 插入结束 👆👆👆
+  // =========================================================
+
   /**
    * 生成摘要（流式）
    */
@@ -488,7 +541,7 @@ ${formattedMessages}
 
     // 流式生成
     let summaryText = ''
-
+    const shouldEnableThinking = provider.name === 'ollama' ? false : (options.enableThinking !== false)
     await provider.streamChat(
       [
         { role: 'system', content: systemPrompt },
@@ -496,7 +549,7 @@ ${formattedMessages}
       ],
       {
         model,
-        enableThinking: options.enableThinking !== false  // 默认启用，除非明确设置为 false
+        enableThinking: provider.name === 'ollama' ? false : (options.enableThinking !== false)  // 默认启用，除非明确设置为 false
       },
       (chunk) => {
         summaryText += chunk
