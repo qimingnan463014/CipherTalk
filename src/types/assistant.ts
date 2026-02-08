@@ -10,5 +10,3 @@ export interface AssistantMessage {
   parsedContent: string
   rawContent: string
 }
-
-main

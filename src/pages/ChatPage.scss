@@ -1207,6 +1207,21 @@
     align-items: center;
     animation: fadeIn 0.5s ease-out both; // 系统消息使用简单的淡入
   }
+
+  &.highlighted .message-bubble {
+    box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.35);
+    animation: message-highlight 2s ease;
+  }
+}
+
+@keyframes message-highlight {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(24, 144, 255, 0.4);
+  }
 }
 
 .load-more-trigger {

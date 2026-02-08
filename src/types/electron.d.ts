@@ -238,6 +238,7 @@ export interface ElectronAPI {
     refreshCache: () => Promise<boolean>
     setCurrentSession: (sessionId: string | null) => Promise<boolean>
     onNewMessages: (callback: (data: { sessionId: string; messages: Message[] }) => void) => () => void
+    onNavigateToChat: (callback: (data: { talkerId: string; messageId: number }) => void) => () => void
     getSessionDetail: (sessionId: string) => Promise<{
       success: boolean
       detail?: {
@@ -274,11 +275,13 @@ export interface ElectronAPI {
       sessionIds?: string[]
       excludeSessionIds?: string[]
       limit?: number
+      offset?: number
     }) => Promise<{
       success: boolean
       results?: AssistantMessage[]
       error?: string
     }>
+    navigateToChat: (payload: { talkerId: string; messageId: number }) => Promise<boolean>
     getMessagesInRange: (payload: {
       startTime: number
       endTime: number
@@ -708,9 +711,18 @@ export interface ElectronAPI {
       }
     }) => Promise<{
       success: boolean
+      content?: string
+      payload?: Array<{
+        messageId: number
+        talkerId: string
+        content: string
+        timestamp: number
+        senderUsername?: string | null
+        isSend?: number | null
+      }>
       error?: string
     }>
-    onAssistantChunk: (callback: (chunk: string) => void) => () => voi main
+    onAssistantChunk: (callback: (chunk: string) => void) => () => void
   }
 }
 

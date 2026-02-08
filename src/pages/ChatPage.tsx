@@ -261,6 +261,7 @@ function ChatPage(_props: ChatPageProps) {
   const [sidebarWidth, setSidebarWidth] = useState(260)
   const [isResizing, setIsResizing] = useState(false)
   const [showDetailPanel, setShowDetailPanel] = useState(false)
+  const [highlightMessageId, setHighlightMessageId] = useState<number | null>(null)
   const [sessionDetail, setSessionDetail] = useState<SessionDetail | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [hasImageKey, setHasImageKey] = useState<boolean | null>(null)
@@ -511,6 +512,50 @@ function ChatPage(_props: ChatPageProps) {
     }
   }
 
+  const scrollToMessage = useCallback((messageId: number) => {
+    const listEl = messageListRef.current
+    if (!listEl) return
+    const target = listEl.querySelector(`[data-message-id="${messageId}"]`) as HTMLElement | null
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [])
+
+  const jumpToMessage = useCallback(async (sessionId: string, messageId: number) => {
+    if (!sessionId || !messageId) return
+
+    setCurrentSession(sessionId)
+    setCurrentOffset(0)
+    setLoadingMessages(true)
+    setMessages([])
+
+    try {
+      const messageResult = await window.electronAPI.chat.getMessage(sessionId, messageId)
+      if (messageResult.success && messageResult.message) {
+        const targetTimestamp = messageResult.message.createTime
+        const result = await window.electronAPI.chat.getMessagesByDate(sessionId, targetTimestamp, 120)
+        if (result.success && result.messages) {
+          setMessages(result.messages)
+          setHasMoreMessages(result.hasMore ?? false)
+          setCurrentOffset(result.messages.length)
+          requestAnimationFrame(() => scrollToMessage(messageId))
+          setHighlightMessageId(messageId)
+          setTimeout(() => setHighlightMessageId(null), 2000)
+          return
+        }
+      }
+
+      await loadMessages(sessionId, 0)
+      requestAnimationFrame(() => scrollToMessage(messageId))
+      setHighlightMessageId(messageId)
+      setTimeout(() => setHighlightMessageId(null), 2000)
+    } catch (e) {
+      console.error('跳转消息失败:', e)
+    } finally {
+      setLoadingMessages(false)
+    }
+  }, [loadMessages, scrollToMessage, setCurrentSession, setCurrentOffset, setLoadingMessages, setMessages, setHasMoreMessages])
+
   // 监听增量消息推送
   useEffect(() => {
     // 告知后端当前会话
@@ -537,6 +582,16 @@ function ChatPage(_props: ChatPageProps) {
       cleanup()
     }
   }, [currentSessionId])
+
+  useEffect(() => {
+    const cleanup = window.electronAPI.chat.onNavigateToChat(({ talkerId, messageId }) => {
+      jumpToMessage(talkerId, messageId)
+    })
+
+    return () => {
+      cleanup()
+    }
+  }, [jumpToMessage])
 
   // 组件卸载时取消当前会话
   useEffect(() => {
@@ -1521,9 +1576,14 @@ function ChatPage(_props: ChatPageProps) {
 
                     // 系统消息居中显示
                     const wrapperClass = isSystem ? 'system' : (isSent ? 'sent' : 'received')
+                    const highlightClass = msg.localId === highlightMessageId ? 'highlighted' : ''
 
                     return (
-                      <div key={msg.localId} className={`message-wrapper ${wrapperClass}`}>
+                      <div
+                        key={msg.localId}
+                        data-message-id={msg.localId}
+                        className={`message-wrapper ${wrapperClass} ${highlightClass}`}
+                      >
                         {showDateDivider && (
                           <div className="date-divider">
                             <span>{formatDateDivider(msg.createTime)}</span>

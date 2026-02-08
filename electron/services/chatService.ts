@@ -1102,7 +1102,6 @@ class ChatService extends EventEmitter {
     return allSessions.filter(sessionId => !excludeSet.has(sessionId))
   }
 
- main
   /**
    * 获取消息列表（支持跨多个数据库合并，已优化）
    */
@@ -1754,6 +1753,7 @@ class ChatService extends EventEmitter {
     sessionIds?: string[]
     excludeSessionIds?: string[]
     limit?: number
+    offset?: number
   }): Promise<{ success: boolean; results?: AssistantMessage[]; error?: string }> {
     try {
       if (!this.dbDir) {
@@ -1768,13 +1768,14 @@ class ChatService extends EventEmitter {
         return { success: true, results: [] }
       }
 
-      const limit = options.limit ?? 200
+      const offset = options.offset ?? 0
+      const limit = options.limit ?? 2000
       const targetSessions = await this.resolveTargetSessions(options.sessionIds, options.excludeSessionIds)
       if (targetSessions.length === 0) {
         return { success: true, results: [] }
       }
 
-      const perSessionLimit = Math.min(200, Math.max(20, Math.ceil(limit / targetSessions.length) + 20))
+      const perSessionLimit = Math.min(1000, Math.max(50, Math.ceil((limit + offset) / targetSessions.length) + 50))
       const allResults: AssistantMessage[] = []
       const searchTerm = `%${keyword}%`
 
@@ -1789,7 +1790,6 @@ class ChatService extends EventEmitter {
           try {
             const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
             const myRowId = this.getMyRowIdForDb(db, dbPath, myWxid, cleanedMyWxid, hasName2IdTable)
- main
 
             const conditions: string[] = []
             const params: any[] = []
@@ -1807,7 +1807,6 @@ class ChatService extends EventEmitter {
             } else if (options.endTime) {
               conditions.push('m.create_time <= ?')
               params.push(options.endTime)
- main
             }
 
             let sql = ''
@@ -1855,7 +1854,7 @@ class ChatService extends EventEmitter {
 
       deduped.sort((a, b) => b.createTime - a.createTime || b.sortSeq - a.sortSeq)
 
-      return { success: true, results: deduped.slice(0, limit) }
+      return { success: true, results: deduped.slice(offset, offset + limit) }
     } catch (e) {
       console.error('ChatService: 全局搜索失败:', e)
       return { success: false, error: String(e) }
@@ -1900,7 +1899,6 @@ class ChatService extends EventEmitter {
           try {
             const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
             const myRowId = this.getMyRowIdForDb(db, dbPath, myWxid, cleanedMyWxid, hasName2IdTable)
- main
 
             if (hasName2IdTable && myRowId !== null) {
               const sql = `SELECT m.*,
@@ -1912,7 +1910,6 @@ class ChatService extends EventEmitter {
                            ORDER BY m.create_time ASC, m.sort_seq ASC
                            LIMIT ?`
               const rows = db.prepare(sql).all(myRowId, options.startTime, options.endTime, perSessionLimit) as any[]
- main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             } else if (hasName2IdTable) {
               const sql = `SELECT m.*, n.user_name AS sender_username
@@ -1922,7 +1919,6 @@ class ChatService extends EventEmitter {
                            ORDER BY m.create_time ASC, m.sort_seq ASC
                            LIMIT ?`
               const rows = db.prepare(sql).all(options.startTime, options.endTime, perSessionLimit) as any[]
- main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             } else {
               const sql = `SELECT * FROM ${tableName}
@@ -1931,7 +1927,6 @@ class ChatService extends EventEmitter {
                            LIMIT ?`
 
               const rows = db.prepare(sql).all(options.startTime, options.endTime, perSessionLimit) as any[]
- main
               rows.forEach(row => allMessages.push(this.buildAssistantMessage(row, sessionId)))
             }
           } catch (e) {

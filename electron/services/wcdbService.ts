@@ -1,6 +1,7 @@
 import { join, dirname } from 'path'
 import { existsSync, readdirSync, statSync } from 'fs'
 import { app } from 'electron'
+import { chatService } from './chatService'
 
 export class WcdbService {
   private lib: any = null
@@ -294,6 +295,84 @@ export class WcdbService {
    */
   shutdown(): void {
     this.close()
+  }
+
+  /**
+   * 搜索聊天记录（用于 AI 工具调用）
+   */
+  async searchMessages(params: {
+    keywords: string
+    start_date?: string
+    end_date?: string
+    contact_name?: string
+    limit?: number
+    offset?: number
+  }): Promise<{
+    success: boolean
+    results?: Array<{
+      messageId: number
+      talkerId: string
+      content: string
+      timestamp: number
+      senderUsername?: string | null
+      isSend?: number | null
+    }>
+    error?: string
+  }> {
+    try {
+      const keyword = params.keywords?.trim()
+      if (!keyword) {
+        return { success: true, results: [] }
+      }
+
+      const startTime = params.start_date
+        ? Math.floor(new Date(`${params.start_date}T00:00:00`).getTime() / 1000)
+        : undefined
+      const endTime = params.end_date
+        ? Math.floor(new Date(`${params.end_date}T23:59:59`).getTime() / 1000)
+        : undefined
+
+      let sessionIds: string[] | undefined
+      if (params.contact_name?.trim()) {
+        const sessionsResult = await chatService.getSessions()
+        if (sessionsResult.success && sessionsResult.sessions) {
+          const contactLower = params.contact_name.trim().toLowerCase()
+          sessionIds = sessionsResult.sessions
+            .filter(session => {
+              const display = session.displayName || session.username
+              return display.toLowerCase().includes(contactLower) || session.username.toLowerCase().includes(contactLower)
+            })
+            .map(session => session.username)
+        }
+      }
+
+      const result = await chatService.searchGlobalMessages({
+        keyword,
+        startTime,
+        endTime,
+        sessionIds,
+        limit: params.limit ?? 2000,
+        offset: params.offset
+      })
+
+      if (!result.success) {
+        return { success: false, error: result.error || '搜索失败' }
+      }
+
+      const mapped = (result.results || []).map(item => ({
+        messageId: item.localId,
+        talkerId: item.sessionId,
+        content: item.parsedContent || item.rawContent,
+        timestamp: item.createTime,
+        senderUsername: item.senderUsername,
+        isSend: item.isSend
+      }))
+
+      return { success: true, results: mapped }
+    } catch (e) {
+      console.error('WCDB 搜索消息失败:', e)
+      return { success: false, error: String(e) }
+    }
   }
 }
 

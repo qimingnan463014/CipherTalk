@@ -5,6 +5,39 @@
     background-color: var(--bg-secondary);
     -webkit-app-region: no-drag;
 
+    .history-search {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px 0;
+
+        input {
+            flex: 1;
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 8px 12px;
+            background: var(--bg-color);
+            color: var(--text-color);
+            font-size: 14px;
+        }
+
+        button {
+            border: none;
+            background: var(--primary-color);
+            color: #fff;
+            border-radius: 10px;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+
+        .history-search-count {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+    }
+
     .history-list {
         flex: 1;
         overflow-y: auto;
@@ -25,6 +58,44 @@
             &.empty {
                 color: var(--text-tertiary);
             }
+        }
+    }
+
+    .history-search-item {
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        background: var(--bg-color);
+        cursor: pointer;
+        text-align: left;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        appearance: none;
+        font: inherit;
+
+        &:hover {
+            border-color: rgba(24, 144, 255, 0.4);
+            box-shadow: 0 6px 16px rgba(24, 144, 255, 0.12);
+        }
+
+        .history-search-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .history-search-content {
+            font-size: 14px;
+            line-height: 1.5;
+            color: var(--text-color);
+        }
+
+        .history-search-link {
+            font-size: 12px;
+            color: var(--primary-color);
         }
     }
 

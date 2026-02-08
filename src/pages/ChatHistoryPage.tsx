@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
 import { ChatRecordItem } from '../types/models'
+import type { AssistantMessage } from '../types/assistant'
 import TitleBar from '../components/TitleBar'
 import MessageContent from '../components/MessageContent'
 import './ChatHistoryPage.scss'
@@ -12,6 +13,14 @@ export default function ChatHistoryPage() {
     const [loading, setLoading] = useState(true)
     const [title, setTitle] = useState('聊天记录')
     const [error, setError] = useState('')
+    const [globalSearchKeyword, setGlobalSearchKeyword] = useState('')
+    const [globalSearchResults, setGlobalSearchResults] = useState<AssistantMessage[]>([])
+    const [globalSearchLoading, setGlobalSearchLoading] = useState(false)
+    const [globalSearchError, setGlobalSearchError] = useState('')
+    const [globalSearchOffset, setGlobalSearchOffset] = useState(0)
+    const [globalSearchHasMore, setGlobalSearchHasMore] = useState(false)
+    const listRef = useRef<HTMLDivElement>(null)
+    const searchPageSize = 200
 
     // 简单的 XML 标签内容提取
     const extractXmlValue = (xml: string, tag: string): string => {
@@ -151,11 +160,100 @@ export default function ChatHistoryPage() {
         loadData()
     }, [sessionId, messageId])
 
+    const runGlobalSearch = async (reset = true) => {
+        const keyword = globalSearchKeyword.trim()
+        if (!keyword) {
+            setGlobalSearchResults([])
+            setGlobalSearchOffset(0)
+            setGlobalSearchHasMore(false)
+            setGlobalSearchError('')
+            return
+        }
+
+        setGlobalSearchLoading(true)
+        setGlobalSearchError('')
+        const nextOffset = reset ? 0 : globalSearchOffset
+
+        try {
+            const result = await window.electronAPI.chat.searchGlobalMessages({
+                keyword,
+                limit: searchPageSize,
+                offset: nextOffset
+            })
+
+            if (!result.success) {
+                setGlobalSearchError(result.error || '搜索失败')
+                return
+            }
+
+            const newResults = result.results || []
+            setGlobalSearchResults(prev => reset ? newResults : [...prev, ...newResults])
+            setGlobalSearchOffset(nextOffset + newResults.length)
+            setGlobalSearchHasMore(newResults.length === searchPageSize)
+        } catch (e) {
+            setGlobalSearchError('搜索过程中发生异常')
+        } finally {
+            setGlobalSearchLoading(false)
+        }
+    }
+
+    const handleSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+        if (event.key === 'Enter') {
+            runGlobalSearch(true)
+        }
+    }
+
+    const handleHistoryScroll = () => {
+        if (!listRef.current || globalSearchLoading || !globalSearchHasMore) return
+        const { scrollTop, scrollHeight, clientHeight } = listRef.current
+        if (scrollHeight - scrollTop - clientHeight < 120) {
+            runGlobalSearch(false)
+        }
+    }
+
     return (
         <div className="chat-history-page">
             <TitleBar title={title} />
-            <div className="history-list">
-                {loading ? (
+            <div className="history-search">
+                <input
+                    value={globalSearchKeyword}
+                    onChange={(e) => setGlobalSearchKeyword(e.target.value)}
+                    onKeyDown={handleSearchKeyDown}
+                    placeholder="搜索聊天记录关键词..."
+                />
+                <button type="button" onClick={() => runGlobalSearch(true)} disabled={globalSearchLoading}>
+                    {globalSearchLoading ? '搜索中...' : '搜索'}
+                </button>
+                {globalSearchKeyword.trim() && (
+                    <span className="history-search-count">已找到 {globalSearchResults.length} 条结果</span>
+                )}
+            </div>
+            <div className="history-list" ref={listRef} onScroll={handleHistoryScroll}>
+                {globalSearchKeyword.trim() ? (
+                    globalSearchLoading && globalSearchResults.length === 0 ? (
+                        <div className="status-msg">搜索中...</div>
+                    ) : globalSearchError ? (
+                        <div className="status-msg error">{globalSearchError}</div>
+                    ) : globalSearchResults.length === 0 ? (
+                        <div className="status-msg empty">未找到匹配的聊天记录</div>
+                    ) : (
+                        globalSearchResults.map(item => (
+                            <button
+                                key={`${item.sessionId}-${item.localId}-${item.sortSeq}`}
+                                type="button"
+                                className="history-search-item"
+                                onClick={() => window.electronAPI.chat.navigateToChat({ talkerId: item.sessionId, messageId: item.localId })}
+                            >
+                                <div className="history-search-meta">
+                                    <span>{item.senderUsername || (item.isSend ? '我' : '未知')}</span>
+                                    <span>{new Date(item.createTime * 1000).toLocaleString()}</span>
+                                </div>
+                                <div className="history-search-content">{item.parsedContent || item.rawContent}</div>
+                                <span className="history-search-link">查看上下文</span>
+                            </button>
+                        ))
+                    )
+                ) : loading ? (
                     <div className="status-msg">加载中...</div>
                 ) : error ? (
                     <div className="status-msg error">{error}</div>
@@ -165,6 +263,9 @@ export default function ChatHistoryPage() {
                     recordList.map((item, i) => (
                         <HistoryItem key={i} item={item} />
                     ))
+                )}
+                {globalSearchHasMore && globalSearchKeyword.trim() && (
+                    <div className="status-msg">继续滚动加载更多...</div>
                 )}
             </div>
         </div>
