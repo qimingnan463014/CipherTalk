@@ -34,8 +34,20 @@ type SearchParseResult = {
   summary?: string
 }
 
+type AssistantAction = {
+  action: 'search' | 'none'
+  params?: {
+    keyword?: string
+    dateRange?: string
+    startDate?: string
+    endDate?: string
+  }
+}
+
 const assistantSystemPrompt = `你是 CipherTalk 的个人业务助理，擅长从聊天记录和用户指令中提炼关键信息、输出日报总结、列出待办与风险提醒。请始终使用中文输出，结构清晰，优先使用要点列表与表格。`
 const assistantSearchPrompt = `你是 CipherTalk 的智能搜索解析器。请根据用户的自然语言，返回用于检索聊天记录的 JSON 数据，且只输出 JSON，不要添加解释或 Markdown。\n\nJSON 字段说明：\n- keyword: 用于全文检索的关键词（必填，若找不到关键词返回空字符串）\n- startDate: 可选，开始日期，格式 YYYY-MM-DD\n- endDate: 可选，结束日期，格式 YYYY-MM-DD\n- summary: 可选，用中文简述解析结果\n\n示例：\n用户输入：近一个月我和谁转过账？\n返回：{\"keyword\":\"转账\",\"startDate\":\"2024-03-01\",\"endDate\":\"2024-03-31\",\"summary\":\"关键词“转账” · 近一个月\"}`
+const assistantAgentPrompt = `你是 CipherTalk 的指令解析器。请判断用户是否在查询聊天记录或业务信息。\n\n若是查询/搜索意图，仅输出 JSON：\n{\"action\":\"search\",\"params\":{\"keyword\":\"关键词\",\"dateRange\":\"15days\",\"startDate\":\"YYYY-MM-DD\",\"endDate\":\"YYYY-MM-DD\"}}\n\n字段说明：\n- action: search 或 none\n- keyword: 关键词，尽量提取与业务/交易相关的词\n- dateRange: 可选，使用类似 7days/15days/30days 的表达\n- startDate/endDate: 可选，明确日期范围时填写 YYYY-MM-DD\n\n若不是查询意图，仅输出：{\"action\":\"none\"}\n\n只输出 JSON，不要添加解释或 Markdown。`
+const assistantSearchSummaryPrompt = `你是 CipherTalk 的智能业务助理。请根据用户的问题与检索到的聊天记录 JSON，总结为中文回答。\n\n要求：\n- 先给出总体结论/数量\n- 如果有多条记录，用列表逐条简要说明（包含会话、时间、摘要）\n- 如果没有记录，明确说明未找到\n- 不要编造未提供的数据`
 const reportRangeStorageKey = 'assistant-report-range'
 
 function formatDateInput(date: Date) {
@@ -102,6 +114,17 @@ function normalizeSearchKeyword(query: string) {
 function extractJsonBlock(content: string) {
   const match = content.match(/\{[\s\S]*\}/)
   return match ? match[0] : ''
+}
+
+function parseRelativeDays(range?: string) {
+  if (!range) return null
+  const match = range.match(/(\d+)\s*(day|days|d|天)/i)
+  if (!match) return null
+  const days = Number(match[1])
+  if (Number.isNaN(days) || days <= 0) return null
+  const endTime = Math.floor(Date.now() / 1000)
+  const startTime = endTime - days * 24 * 60 * 60
+  return { startTime, endTime, label: `最近${days}天` }
 }
 
 function getDefaultReportRange() {
@@ -205,13 +228,20 @@ function AssistantPage() {
   const [enableThinking, setEnableThinking] = useState(true)
 
   useEffect(() => {
-    if (sessions.length > 0) return
-
-    window.electronAPI.chat.getSessions().then(result => {
-      if (result.success && result.sessions) {
+    let cancelled = false
+    const loadSessions = async () => {
+      if (sessions.length > 0) return
+      const connectResult = await window.electronAPI.chat.connect()
+      if (!connectResult.success) return
+      const result = await window.electronAPI.chat.getSessions()
+      if (!cancelled && result.success && result.sessions) {
         setSessions(result.sessions)
       }
-    })
+    }
+    loadSessions().catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
   }, [sessions.length, setSessions])
 
   useEffect(() => {
@@ -326,6 +356,38 @@ function AssistantPage() {
     }
 
     return JSON.parse(jsonBlock) as SearchParseResult
+  }
+
+  const parseAssistantAction = async (query: string) => {
+    let content = ''
+    const cleanup = window.electronAPI.ai.onAssistantChunk((chunk) => {
+      content += chunk
+    })
+
+    const result = await window.electronAPI.ai.assistantChat({
+      messages: [
+        { role: 'system', content: assistantAgentPrompt },
+        { role: 'user', content: query }
+      ],
+      options: {
+        temperature: 0,
+        maxTokens: 200,
+        enableThinking: false
+      }
+    })
+
+    cleanup()
+
+    if (!result.success) {
+      throw new Error(result.error || '意图识别失败')
+    }
+
+    const jsonBlock = extractJsonBlock(content)
+    if (!jsonBlock) {
+      throw new Error('未能识别指令')
+    }
+
+    return JSON.parse(jsonBlock) as AssistantAction
   }
 
   const resolveSearchPayload = async () => {
@@ -488,13 +550,16 @@ function AssistantPage() {
       if (!result.success) {
         setAssistantSearchError(result.error || '检索失败，请重试')
         setAssistantSearchResults([])
-        return
+        return []
       }
 
-      setAssistantSearchResults(result.results || [])
+      const resolvedResults = result.results || []
+      setAssistantSearchResults(resolvedResults)
+      return resolvedResults
     } catch (e) {
       setAssistantSearchError('检索过程中发生异常')
       setAssistantSearchResults([])
+      return []
     } finally {
       setAssistantSearchLoading(false)
     }
@@ -573,13 +638,120 @@ function AssistantPage() {
     ]
   }
 
+  const buildSearchSummaryPayload = (query: string, results: AssistantMessage[]) => {
+    const summarized = results.map((msg) => ({
+      session: sessionNameMap.get(msg.sessionId) || msg.sessionId,
+      sender: msg.senderUsername || (msg.isSend ? '我' : '未知'),
+      time: formatTime(msg.createTime),
+      content: msg.parsedContent || msg.rawContent
+    }))
+
+    return [
+      { role: 'system' as const, content: assistantSearchSummaryPrompt },
+      {
+        role: 'user' as const,
+        content: `用户问题：${query}\n\n检索结果 JSON：${JSON.stringify(summarized)}`
+      }
+    ]
+  }
+
+  const resolveSearchIntentFromAction = (action: AssistantAction, query: string): SearchIntent | null => {
+    if (action.action !== 'search') return null
+
+    const keyword = action.params?.keyword?.trim() || normalizeSearchKeyword(query)
+    if (!keyword) return null
+
+    const dateRange = parseRelativeDays(action.params?.dateRange)
+    const startDate = action.params?.startDate
+    const endDate = action.params?.endDate
+    const parsedRange = resolveRelativeRange(query)
+
+    const startTime = startDate ? Math.floor(new Date(`${startDate}T00:00:00`).getTime() / 1000) : (dateRange?.startTime ?? parsedRange?.startTime)
+    const endTime = endDate ? Math.floor(new Date(`${endDate}T23:59:59`).getTime() / 1000) : (dateRange?.endTime ?? parsedRange?.endTime)
+
+    const summaryParts = [`关键词「${keyword}」`]
+    if (startDate || endDate) {
+      summaryParts.push(`${startDate || '不限'} 至 ${endDate || '不限'}`)
+    } else if (dateRange?.label) {
+      summaryParts.push(dateRange.label)
+    } else if (parsedRange?.label) {
+      summaryParts.push(parsedRange.label)
+    }
+
+    return {
+      keyword,
+      startTime,
+      endTime,
+      summary: summaryParts.join(' · ')
+    }
+  }
+
+  const sendAssistantSummary = async (query: string, results: AssistantMessage[]) => {
+    const userMessage: ChatMessage = {
+      id: `${Date.now()}-user`,
+      role: 'user',
+      content: query,
+      createdAt: Date.now()
+    }
+
+    const assistantMessage: ChatMessage = {
+      id: `${Date.now()}-assistant`,
+      role: 'assistant',
+      content: '',
+      createdAt: Date.now(),
+      isStreaming: true
+    }
+
+    setAssistantMessages(prev => [...prev, userMessage, assistantMessage])
+    setAssistantError('')
+    setAssistantStreaming(true)
+
+    const cleanup = window.electronAPI.ai.onAssistantChunk((chunk) => {
+      setAssistantMessages(prev => prev.map(msg => {
+        if (msg.id !== assistantMessage.id) return msg
+        return { ...msg, content: msg.content + chunk }
+      }))
+    })
+
+    try {
+      const result = await window.electronAPI.ai.assistantChat({
+        messages: buildSearchSummaryPayload(query, results),
+        options: {
+          enableThinking
+        }
+      })
+
+      if (!result.success) {
+        setAssistantError(result.error || 'AI 响应失败')
+      }
+    } catch (e) {
+      setAssistantError('AI 响应失败')
+    } finally {
+      cleanup()
+      setAssistantMessages(prev => prev.map(msg => {
+        if (msg.id !== assistantMessage.id) return msg
+        return { ...msg, isStreaming: false }
+      }))
+      setAssistantStreaming(false)
+    }
+  }
+
   const sendAssistantMessage = async (content: string, options?: { enableSearchIntent?: boolean }) => {
     if (!content || assistantStreaming) return
 
     if (options?.enableSearchIntent) {
-      const intent = detectSearchIntent(content)
+      let action: AssistantAction | null = null
+      try {
+        action = await parseAssistantAction(content)
+      } catch (error) {
+        action = null
+      }
+
+      const intent = action ? resolveSearchIntentFromAction(action, content) : detectSearchIntent(content)
       if (intent) {
-        await runAssistantSearch(intent)
+        const results = await runAssistantSearch(intent)
+        await sendAssistantSummary(content, results)
+        return
       }
     }
 
