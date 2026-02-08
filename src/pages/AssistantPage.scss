@@ -98,11 +98,13 @@
   gap: 20px;
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
+  align-items: stretch;
 }
 
 .assistant-panel--left {
-  overflow: hidden;
-  padding-right: 4px;
+  overflow-y: auto;
+  padding-right: 8px;
 }
 
 .assistant-panel--right {
@@ -118,10 +120,13 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .assistant-card--sessions {
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
 }
 
@@ -150,8 +155,9 @@
 
 .assistant-filter-row {
   display: grid;
-  grid-template-columns: 160px 1fr;
+  grid-template-columns: minmax(140px, 200px) minmax(220px, 1fr);
   gap: 16px;
+  align-items: end;
 }
 
 .assistant-filter-row label,
@@ -430,8 +436,14 @@
 
 .assistant-report-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
+  row-gap: 12px;
   align-items: flex-end;
+}
+
+.assistant-report-row label {
+  flex: 1 1 180px;
 }
 
 .assistant-report-summary {
