@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, CalendarRange, ChevronDown, ClipboardCopy, Filter, ListTodo, Search, Send, Sparkles, ArrowLeft } from 'lucide-react'
+import { Bot, CalendarRange, ChevronDown, ClipboardCopy, Filter, ListTodo, Search, Send, Sparkles, ArrowLeft, Check, FileDown } from 'lucide-react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useChatStore } from '../stores/chatStore'
@@ -27,10 +27,18 @@ type SearchIntent = {
   summary: string
 }
 
+type SearchParseResult = {
+  keyword: string
+  startDate?: string
+  endDate?: string
+  summary?: string
+}
+
 const assistantSystemPrompt = `你是 CipherTalk 的个人业务助理，擅长从聊天记录和用户指令中提炼关键信息、输出日报总结、列出待办与风险提醒。请始终使用中文输出，结构清晰，优先使用要点列表与表格。`
+const assistantSearchPrompt = `你是 CipherTalk 的智能搜索解析器。请根据用户的自然语言，返回用于检索聊天记录的 JSON 数据，且只输出 JSON，不要添加解释或 Markdown。\n\nJSON 字段说明：\n- keyword: 用于全文检索的关键词（必填，若找不到关键词返回空字符串）\n- startDate: 可选，开始日期，格式 YYYY-MM-DD\n- endDate: 可选，结束日期，格式 YYYY-MM-DD\n- summary: 可选，用中文简述解析结果\n\n示例：\n用户输入：近一个月我和谁转过账？\n返回：{\"keyword\":\"转账\",\"startDate\":\"2024-03-01\",\"endDate\":\"2024-03-31\",\"summary\":\"关键词“转账” · 近一个月\"}`
+const reportRangeStorageKey = 'assistant-report-range'
 
 function formatDateInput(date: Date) {
-
   return date.toISOString().slice(0, 10)
 }
 
@@ -38,7 +46,7 @@ function formatTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString()
 }
 
-function buildDailyPrompt(date: string, messages: AssistantMessage[], sessionNameMap: Map<string, string>) {
+function buildDailyPrompt(dateRangeLabel: string, messages: AssistantMessage[], sessionNameMap: Map<string, string>) {
   const lines = messages.map((msg) => {
     const sessionName = sessionNameMap.get(msg.sessionId) || msg.sessionId
     const sender = msg.senderUsername || (msg.isSend ? '我' : sessionName)
@@ -46,9 +54,9 @@ function buildDailyPrompt(date: string, messages: AssistantMessage[], sessionNam
     return `[${formatTime(msg.createTime)}] ${sessionName} · ${sender}: ${content}`
   })
 
-  const historyText = lines.length > 0 ? lines.join('\n') : '（当日未检索到可用聊天记录）'
+  const historyText = lines.length > 0 ? lines.join('\n') : '（该时段未检索到可用聊天记录）'
 
-  return `你是我的个人业务助理，请根据以下聊天记录生成【${date}】的工作日报，并输出：\n\n1. 今日关键进展（按客户/项目/群组归类）\n2. 重要决策/结论\n3. 待办清单（包含负责人、截止时间，如未明确则标注待确认）\n4. 风险/异常点与需要跟进的问题\n\n要求：\n- 只基于记录事实，不要臆测\n- 无价值寒暄可忽略\n- 输出清晰的标题与列表\n\n聊天记录：\n${historyText}`
+  return `你是我的个人业务助理，请根据以下聊天记录生成【${dateRangeLabel}】的工作日报，并输出：\n\n1. 今日关键进展（按客户/项目/群组归类）\n2. 重要决策/结论\n3. 待办清单（包含负责人、截止时间，如未明确则标注待确认）\n4. 风险/异常点与需要跟进的问题\n\n要求：\n- 只基于记录事实，不要臆测\n- 无价值寒暄可忽略\n- 输出清晰的标题与列表\n\n聊天记录：\n${historyText}`
 }
 
 function resolveRelativeRange(query: string) {
@@ -91,6 +99,42 @@ function normalizeSearchKeyword(query: string) {
   return stripped
 }
 
+function extractJsonBlock(content: string) {
+  const match = content.match(/\{[\s\S]*\}/)
+  return match ? match[0] : ''
+}
+
+function getDefaultReportRange() {
+  const endDate = new Date()
+  const startDate = new Date()
+  startDate.setDate(endDate.getDate() - 2)
+  return {
+    startDate: formatDateInput(startDate),
+    endDate: formatDateInput(endDate)
+  }
+}
+
+function loadReportRange() {
+  try {
+    const raw = localStorage.getItem(reportRangeStorageKey)
+    if (raw) {
+      const parsed = JSON.parse(raw) as { startDate?: string; endDate?: string }
+      if (parsed.startDate && parsed.endDate) {
+        return { startDate: parsed.startDate, endDate: parsed.endDate }
+      }
+    }
+  } catch (error) {
+    console.warn('读取日报日期范围失败:', error)
+  }
+  return getDefaultReportRange()
+}
+
+function getAvatarText(name: string) {
+  const trimmed = name.trim()
+  if (!trimmed) return '#'
+  return trimmed.slice(0, 1).toUpperCase()
+}
+
 function detectSearchIntent(query: string): SearchIntent | null {
   const cleaned = query.trim()
   if (!cleaned) return null
@@ -124,22 +168,28 @@ function AssistantPage() {
   const [groupGroupCollapsed, setGroupGroupCollapsed] = useState(false)
 
   const [searchKeyword, setSearchKeyword] = useState('')
-  const [searchStartDate, setSearchStartDate] = useState('')
-  const [searchEndDate, setSearchEndDate] = useState('')
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState('')
   const [searchResults, setSearchResults] = useState<AssistantMessage[]>([])
+  const [searchParsed, setSearchParsed] = useState<SearchParseResult | null>(null)
 
-  const [reportDate, setReportDate] = useState(formatDateInput(new Date()))
+  const initialReportRange = useMemo(() => loadReportRange(), [])
+  const [reportStartDate, setReportStartDate] = useState(initialReportRange.startDate)
+  const [reportEndDate, setReportEndDate] = useState(initialReportRange.endDate)
   const [reportLoading, setReportLoading] = useState(false)
   const [reportMessages, setReportMessages] = useState<AssistantMessage[]>([])
   const [reportPrompt, setReportPrompt] = useState('')
   const [reportError, setReportError] = useState('')
+  const [reportStats, setReportStats] = useState<{ messageCount: number | null; sessionCount: number | null }>({
+    messageCount: null,
+    sessionCount: null
+  })
 
   const [assistantMessages, setAssistantMessages] = useState<ChatMessage[]>([])
   const [assistantInput, setAssistantInput] = useState('')
   const [assistantError, setAssistantError] = useState('')
   const [assistantStreaming, setAssistantStreaming] = useState(false)
+  const [assistantAutoScroll, setAssistantAutoScroll] = useState(true)
   const assistantInputRef = useRef<HTMLTextAreaElement | null>(null)
   const assistantChatBodyRef = useRef<HTMLDivElement | null>(null)
 
@@ -147,6 +197,7 @@ function AssistantPage() {
   const [assistantSearchLoading, setAssistantSearchLoading] = useState(false)
   const [assistantSearchError, setAssistantSearchError] = useState('')
   const [assistantSearchSummary, setAssistantSearchSummary] = useState('')
+  const [highlightedResult, setHighlightedResult] = useState<string | null>(null)
 
   const [aiProviderName, setAiProviderName] = useState('')
   const [aiModelName, setAiModelName] = useState('')
@@ -203,10 +254,17 @@ function AssistantPage() {
   }, [filteredSessions])
 
   useEffect(() => {
-    if (assistantChatBodyRef.current) {
+    if (assistantChatBodyRef.current && assistantAutoScroll) {
       assistantChatBodyRef.current.scrollTop = assistantChatBodyRef.current.scrollHeight
     }
-  }, [assistantMessages, assistantSearchResults, assistantSearchLoading])
+  }, [assistantMessages, assistantSearchResults, assistantSearchLoading, assistantAutoScroll])
+
+  useEffect(() => {
+    localStorage.setItem(reportRangeStorageKey, JSON.stringify({
+      startDate: reportStartDate,
+      endDate: reportEndDate
+    }))
+  }, [reportStartDate, reportEndDate])
 
   const toggleSession = (sessionId: string) => {
     setSelectedSessions(prev => {
@@ -238,21 +296,101 @@ function AssistantPage() {
     return {}
   }
 
+  const parseSearchQueryWithAi = async (query: string) => {
+    let content = ''
+    const cleanup = window.electronAPI.ai.onAssistantChunk((chunk) => {
+      content += chunk
+    })
+
+    const result = await window.electronAPI.ai.assistantChat({
+      messages: [
+        { role: 'system', content: assistantSearchPrompt },
+        { role: 'user', content: query }
+      ],
+      options: {
+        temperature: 0.1,
+        maxTokens: 300,
+        enableThinking: false
+      }
+    })
+
+    cleanup()
+
+    if (!result.success) {
+      throw new Error(result.error || '智能解析失败')
+    }
+
+    const jsonBlock = extractJsonBlock(content)
+    if (!jsonBlock) {
+      throw new Error('未能解析搜索指令')
+    }
+
+    return JSON.parse(jsonBlock) as SearchParseResult
+  }
+
+  const resolveSearchPayload = async () => {
+    const query = searchKeyword.trim()
+    if (!query) {
+      setSearchError('请输入搜索内容后再试')
+      return null
+    }
+
+    setSearchError('')
+    setSearchParsed(null)
+
+    try {
+      const parsed = await parseSearchQueryWithAi(query)
+      const keyword = parsed.keyword?.trim() || normalizeSearchKeyword(query)
+      const fallbackIntent = detectSearchIntent(query)
+      const startDate = parsed.startDate || (fallbackIntent?.startTime ? formatDateInput(new Date(fallbackIntent.startTime * 1000)) : undefined)
+      const endDate = parsed.endDate || (fallbackIntent?.endTime ? formatDateInput(new Date(fallbackIntent.endTime * 1000)) : undefined)
+      const summary = parsed.summary || fallbackIntent?.summary
+
+      const normalized: SearchParseResult = {
+        keyword,
+        startDate,
+        endDate,
+        summary
+      }
+
+      setSearchParsed(normalized)
+
+      return normalized
+    } catch (error) {
+      const fallbackIntent = detectSearchIntent(query)
+      if (fallbackIntent) {
+        const fallbackParsed: SearchParseResult = {
+          keyword: fallbackIntent.keyword,
+          startDate: fallbackIntent.startTime ? formatDateInput(new Date(fallbackIntent.startTime * 1000)) : undefined,
+          endDate: fallbackIntent.endTime ? formatDateInput(new Date(fallbackIntent.endTime * 1000)) : undefined,
+          summary: fallbackIntent.summary
+        }
+        setSearchParsed(fallbackParsed)
+        return fallbackParsed
+      }
+
+      setSearchError(error instanceof Error ? error.message : '智能解析失败')
+      return null
+    }
+  }
+
   const handleGlobalSearch = async () => {
-    if (!searchKeyword.trim()) {
-      setSearchError('请输入关键词后再搜索')
+    setSearchLoading(true)
+    setSearchResults([])
+
+    const parsed = await resolveSearchPayload()
+    if (!parsed?.keyword) {
+      setSearchLoading(false)
+      setSearchError('未识别到有效关键词，请补充说明')
       return
     }
 
-    setSearchLoading(true)
-    setSearchError('')
-
-    const startTime = searchStartDate ? Math.floor(new Date(`${searchStartDate}T00:00:00`).getTime() / 1000) : undefined
-    const endTime = searchEndDate ? Math.floor(new Date(`${searchEndDate}T23:59:59`).getTime() / 1000) : undefined
+    const startTime = parsed.startDate ? Math.floor(new Date(`${parsed.startDate}T00:00:00`).getTime() / 1000) : undefined
+    const endTime = parsed.endDate ? Math.floor(new Date(`${parsed.endDate}T23:59:59`).getTime() / 1000) : undefined
 
     try {
       const result = await window.electronAPI.chat.searchGlobalMessages({
-        keyword: searchKeyword.trim(),
+        keyword: parsed.keyword,
         startTime,
         endTime,
         limit: 200,
@@ -275,13 +413,29 @@ function AssistantPage() {
   }
 
   const handleGenerateReport = async () => {
+    if (!reportStartDate || !reportEndDate) {
+      setReportError('请先选择完整的日期范围')
+      return
+    }
+
+    const rangeStart = new Date(`${reportStartDate}T00:00:00`)
+    const rangeEnd = new Date(`${reportEndDate}T23:59:59`)
+    if (Number.isNaN(rangeStart.getTime()) || Number.isNaN(rangeEnd.getTime())) {
+      setReportError('日期格式不正确，请重新选择')
+      return
+    }
+
+    if (rangeStart.getTime() > rangeEnd.getTime()) {
+      setReportError('开始日期不能晚于结束日期')
+      return
+    }
+
     setReportLoading(true)
     setReportError('')
 
     try {
-
-      const startTime = Math.floor(new Date(`${reportDate}T00:00:00`).getTime() / 1000)
-      const endTime = Math.floor(new Date(`${reportDate}T23:59:59`).getTime() / 1000) 
+      const startTime = Math.floor(rangeStart.getTime() / 1000)
+      const endTime = Math.floor(rangeEnd.getTime() / 1000)
 
       const result = await window.electronAPI.chat.getMessagesInRange({
         startTime,
@@ -294,16 +448,24 @@ function AssistantPage() {
         setReportError(result.error || '提取失败，请重试')
         setReportMessages([])
         setReportPrompt('')
+        setReportStats({ messageCount: null, sessionCount: null })
         return
       }
 
       const messages = result.messages || []
+      const uniqueSessions = new Set(messages.map(msg => msg.sessionId))
       setReportMessages(messages)
-      setReportPrompt(buildDailyPrompt(reportDate, messages, sessionNameMap))
+      setReportStats({ messageCount: messages.length, sessionCount: uniqueSessions.size })
+      const rangeLabel = reportStartDate === reportEndDate ? reportStartDate : `${reportStartDate} - ${reportEndDate}`
+      const prompt = buildDailyPrompt(rangeLabel, messages, sessionNameMap)
+      setReportPrompt(prompt)
+      setAssistantInput(prompt)
+      assistantInputRef.current?.focus()
     } catch (e) {
       setReportError('提取过程中发生异常')
       setReportMessages([])
       setReportPrompt('')
+      setReportStats({ messageCount: null, sessionCount: null })
     } finally {
       setReportLoading(false)
     }
@@ -351,6 +513,52 @@ function AssistantPage() {
     if (!reportPrompt) return
     setAssistantInput(reportPrompt)
     assistantInputRef.current?.focus()
+  }
+
+  const handleCopyReport = async () => {
+    const latest = assistantMessages.slice().reverse().find(message => message.role === 'assistant' && message.content.trim())
+    if (!latest) return
+    const html = DOMPurify.sanitize(marked.parse(latest.content || ''))
+    const temp = document.createElement('div')
+    temp.innerHTML = html
+    const plainText = temp.textContent || ''
+    try {
+      await navigator.clipboard.writeText(plainText)
+    } catch (error) {
+      console.error('复制失败:', error)
+    }
+  }
+
+  const handleExportReport = () => {
+    const latest = assistantMessages.slice().reverse().find(message => message.role === 'assistant' && message.content.trim())
+    if (!latest) return
+    const html = DOMPurify.sanitize(marked.parse(latest.content || ''))
+    const temp = document.createElement('div')
+    temp.innerHTML = html
+    const plainText = temp.textContent || ''
+    const blob = new Blob([plainText], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `日报-${formatDateInput(new Date())}.txt`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleAssistantScroll = () => {
+    const container = assistantChatBodyRef.current
+    if (!container) return
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    setAssistantAutoScroll(distanceFromBottom < 80)
+  }
+
+  const handleResultJump = (result: AssistantMessage) => {
+    const key = `${result.sessionId}-${result.localId}-${result.sortSeq}`
+    setHighlightedResult(key)
+    window.electronAPI.window.openChatHistoryWindow(result.sessionId, result.localId)
+    setTimeout(() => {
+      setHighlightedResult(prev => (prev === key ? null : prev))
+    }, 2000)
   }
 
   const buildChatPayload = (newUserMessage: ChatMessage) => {
@@ -470,12 +678,12 @@ function AssistantPage() {
 
       <div className="assistant-content">
         <div className="assistant-panel assistant-panel--left">
-          <section className="assistant-card">
+          <section className="assistant-card assistant-card--sessions">
             <div className="assistant-card-header">
               <Filter size={18} />
               <h2>数据范围与过滤</h2>
             </div>
-            <div className="assistant-card-body">
+            <div className="assistant-card-body assistant-card-body--sessions">
               <div className="assistant-filter-row">
                 <label>
                   模式
@@ -512,14 +720,20 @@ function AssistantPage() {
                   </button>
                   <div className={`assistant-session-group-body ${friendGroupCollapsed ? 'collapsed' : ''}`}>
                     {groupedSessions.friendSessions.map(session => (
-                      <label key={session.username} className={`assistant-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={selectedSessions.has(session.username)}
-                          onChange={() => toggleSession(session.username)}
-                        />
-                        <span>{session.displayName || session.username}</span>
-                      </label>
+                      <button
+                        key={session.username}
+                        type="button"
+                        className={`assistant-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}
+                        onClick={() => toggleSession(session.username)}
+                      >
+                        <span className="assistant-session-avatar">
+                          {getAvatarText(session.displayName || session.username)}
+                        </span>
+                        <span className="assistant-session-name">{session.displayName || session.username}</span>
+                        <span className={`assistant-session-check ${selectedSessions.has(session.username) ? 'checked' : ''}`}>
+                          <Check size={14} />
+                        </span>
+                      </button>
                     ))}
                     {groupedSessions.friendSessions.length === 0 && (
                       <div className="assistant-empty">暂无匹配的好友会话</div>
@@ -538,14 +752,20 @@ function AssistantPage() {
                   </button>
                   <div className={`assistant-session-group-body ${groupGroupCollapsed ? 'collapsed' : ''}`}>
                     {groupedSessions.groupSessions.map(session => (
-                      <label key={session.username} className={`assistant-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={selectedSessions.has(session.username)}
-                          onChange={() => toggleSession(session.username)}
-                        />
-                        <span>{session.displayName || session.username}</span>
-                      </label>
+                      <button
+                        key={session.username}
+                        type="button"
+                        className={`assistant-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}
+                        onClick={() => toggleSession(session.username)}
+                      >
+                        <span className="assistant-session-avatar">
+                          {getAvatarText(session.displayName || session.username)}
+                        </span>
+                        <span className="assistant-session-name">{session.displayName || session.username}</span>
+                        <span className={`assistant-session-check ${selectedSessions.has(session.username) ? 'checked' : ''}`}>
+                          <Check size={14} />
+                        </span>
+                      </button>
                     ))}
                     {groupedSessions.groupSessions.length === 0 && (
                       <div className="assistant-empty">暂无匹配的群聊会话</div>
@@ -562,46 +782,47 @@ function AssistantPage() {
           <section className="assistant-card">
             <div className="assistant-card-header">
               <Search size={18} />
-              <h2>全局搜索</h2>
+              <h2>智能全局搜索</h2>
             </div>
             <div className="assistant-card-body">
               <div className="assistant-search-row">
                 <input
                   value={searchKeyword}
                   onChange={(e) => setSearchKeyword(e.target.value)}
-                  placeholder="关键词，如：欠账、报价、付款"
+                  placeholder="例：近一个月我和谁转过账？"
                 />
                 <button type="button" onClick={handleGlobalSearch} disabled={searchLoading}>
                   {searchLoading ? '搜索中...' : '立即搜索'}
                 </button>
               </div>
-              <div className="assistant-date-row">
-                <label>
-                  开始日期
-                  <input type="date" value={searchStartDate} onChange={(e) => setSearchStartDate(e.target.value)} />
-                </label>
-                <label>
-                  结束日期
-                  <input type="date" value={searchEndDate} onChange={(e) => setSearchEndDate(e.target.value)} />
-                </label>
-              </div>
+              {searchParsed && (
+                <div className="assistant-search-summary">
+                  <span>解析结果</span>
+                  <div className="assistant-search-tags">
+                    <span>关键词：{searchParsed.keyword || '未识别'}</span>
+                    {(searchParsed.startDate || searchParsed.endDate) && (
+                      <span>时间范围：{searchParsed.startDate || '不限'} 至 {searchParsed.endDate || '不限'}</span>
+                    )}
+                    {searchParsed.summary && <span>{searchParsed.summary}</span>}
+                  </div>
+                </div>
+              )}
               {searchError && <div className="assistant-error">{searchError}</div>}
               <div className="assistant-result-list">
                 {searchResults.map(result => (
-                  <div key={`${result.sessionId}-${result.localId}-${result.sortSeq}`} className="assistant-result-item">
+                  <button
+                    type="button"
+                    key={`${result.sessionId}-${result.localId}-${result.sortSeq}`}
+                    className={`assistant-result-item ${highlightedResult === `${result.sessionId}-${result.localId}-${result.sortSeq}` ? 'highlighted' : ''}`}
+                    onClick={() => handleResultJump(result)}
+                  >
                     <div className="assistant-result-meta">
                       <span>{sessionNameMap.get(result.sessionId) || result.sessionId}</span>
                       <span>{result.senderUsername || (result.isSend ? '我' : '未知')} · {formatTime(result.createTime)}</span>
                     </div>
                     <div className="assistant-result-content">{result.parsedContent || result.rawContent}</div>
-                    <button
-                      type="button"
-                      className="assistant-link"
-                      onClick={() => window.electronAPI.window.openChatHistoryWindow(result.sessionId, result.localId)}
-                    >
-                      查看上下文
-                    </button>
-                  </div>
+                    <span className="assistant-link">查看上下文</span>
+                  </button>
                 ))}
                 {!searchLoading && searchResults.length === 0 && (
                   <div className="assistant-empty">暂无搜索结果</div>
@@ -618,8 +839,12 @@ function AssistantPage() {
             <div className="assistant-card-body">
               <div className="assistant-report-row">
                 <label>
-                  日报日期
-                  <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} />
+                  开始日期
+                  <input type="date" value={reportStartDate} onChange={(e) => setReportStartDate(e.target.value)} />
+                </label>
+                <label>
+                  结束日期
+                  <input type="date" value={reportEndDate} onChange={(e) => setReportEndDate(e.target.value)} />
                 </label>
                 <button type="button" onClick={handleGenerateReport} disabled={reportLoading}>
                   {reportLoading ? '提取中...' : '提取聊天记录'}
@@ -629,11 +854,11 @@ function AssistantPage() {
               <div className="assistant-report-summary">
                 <div>
                   <span>记录条数</span>
-                  <strong>{reportMessages.length}</strong>
+                  <strong>{reportStats.messageCount && reportStats.messageCount > 0 ? reportStats.messageCount : '--'}</strong>
                 </div>
                 <div>
                   <span>覆盖会话</span>
-                  <strong>{new Set(reportMessages.map(msg => msg.sessionId)).size}</strong>
+                  <strong>{reportStats.sessionCount && reportStats.sessionCount > 0 ? reportStats.sessionCount : '--'}</strong>
                 </div>
               </div>
               <div className="assistant-report-prompt">
@@ -668,7 +893,7 @@ function AssistantPage() {
               <Bot size={18} />
               <h2>AI 助理对话</h2>
             </div>
-            <div className="assistant-chat-body" ref={assistantChatBodyRef}>
+            <div className="assistant-chat-body" ref={assistantChatBodyRef} onScroll={handleAssistantScroll}>
               {assistantMessages.length === 0 && (
                 <div className="assistant-empty">
                   输入需求开始对话，支持粘贴日报 Prompt 或直接提问。
@@ -689,6 +914,17 @@ function AssistantPage() {
               ))}
             </div>
             {assistantError && <div className="assistant-error">{assistantError}</div>}
+            <div className="assistant-report-actions">
+              <span>日报输出</span>
+              <div>
+                <button type="button" onClick={handleCopyReport} disabled={!assistantMessages.some(msg => msg.role === 'assistant' && msg.content.trim())}>
+                  <ClipboardCopy size={14} />复制纯文本
+                </button>
+                <button type="button" onClick={handleExportReport} disabled={!assistantMessages.some(msg => msg.role === 'assistant' && msg.content.trim())}>
+                  <FileDown size={14} />导出
+                </button>
+              </div>
+            </div>
             <div className="assistant-chat-input">
               <textarea
                 ref={assistantInputRef}
@@ -710,20 +946,19 @@ function AssistantPage() {
               <div className="assistant-result-list assistant-result-list--chat">
                 {assistantSearchLoading && <div className="assistant-empty">正在检索聊天记录...</div>}
                 {!assistantSearchLoading && assistantSearchResults.map(result => (
-                  <div key={`assistant-${result.sessionId}-${result.localId}-${result.sortSeq}`} className="assistant-result-item">
+                  <button
+                    type="button"
+                    key={`assistant-${result.sessionId}-${result.localId}-${result.sortSeq}`}
+                    className={`assistant-result-item ${highlightedResult === `${result.sessionId}-${result.localId}-${result.sortSeq}` ? 'highlighted' : ''}`}
+                    onClick={() => handleResultJump(result)}
+                  >
                     <div className="assistant-result-meta">
                       <span>{sessionNameMap.get(result.sessionId) || result.sessionId}</span>
                       <span>{result.senderUsername || (result.isSend ? '我' : '未知')} · {formatTime(result.createTime)}</span>
                     </div>
                     <div className="assistant-result-content">{result.parsedContent || result.rawContent}</div>
-                    <button
-                      type="button"
-                      className="assistant-link"
-                      onClick={() => window.electronAPI.window.openChatHistoryWindow(result.sessionId, result.localId)}
-                    >
-                      查看上下文
-                    </button>
-                  </div>
+                    <span className="assistant-link">查看上下文</span>
+                  </button>
                 ))}
                 {!assistantSearchLoading && assistantSearchResults.length === 0 && (
                   <div className="assistant-empty">暂无检索结果</div>

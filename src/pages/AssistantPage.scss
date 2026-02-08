@@ -101,7 +101,7 @@
 }
 
 .assistant-panel--left {
-  overflow-y: auto;
+  overflow: hidden;
   padding-right: 4px;
 }
 
@@ -120,6 +120,11 @@
   gap: 16px;
 }
 
+.assistant-card--sessions {
+  flex: 1;
+  min-height: 0;
+}
+
 .assistant-card-header {
   display: flex;
   align-items: center;
@@ -136,6 +141,11 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.assistant-card-body--sessions {
+  flex: 1;
+  min-height: 0;
 }
 
 .assistant-filter-row {
@@ -194,8 +204,9 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 280px;
+  flex: 1;
   overflow-y: auto;
+  padding-bottom: 16px;
   padding-right: 4px;
 }
 
@@ -250,12 +261,59 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid transparent;
   cursor: pointer;
   font-size: 13px;
   background: var(--card-bg-color);
+  text-align: left;
+  appearance: none;
+  font: inherit;
+}
+
+.assistant-session-item:hover {
+  background: var(--hover-bg-color);
+}
+
+.assistant-session-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(24, 144, 255, 0.12);
+  color: var(--primary-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.assistant-session-name {
+  flex: 1;
+  color: var(--text-color);
+  font-weight: 500;
+}
+
+.assistant-session-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.assistant-session-check.checked {
+  border-color: var(--primary-color);
+  background: var(--primary-color);
+  color: #fff;
 }
 
 .assistant-session-item.selected {
@@ -266,6 +324,27 @@
 .assistant-search-row {
   display: flex;
   gap: 12px;
+}
+
+.assistant-search-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.assistant-search-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assistant-search-tags span {
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 4px 10px;
 }
 
 .assistant-search-row button,
@@ -303,6 +382,28 @@
   flex-direction: column;
   gap: 8px;
   background: var(--bg-color);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  appearance: none;
+  font: inherit;
+}
+
+.assistant-result-item:hover {
+  border-color: rgba(24, 144, 255, 0.4);
+  box-shadow: 0 6px 16px rgba(24, 144, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.assistant-result-item.highlighted {
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.25);
+  animation: assistant-result-flash 2s ease;
+}
+
+.assistant-result-item:focus-visible {
+  outline: 2px solid rgba(24, 144, 255, 0.5);
+  outline-offset: 2px;
 }
 
 .assistant-result-meta {
@@ -404,12 +505,13 @@
 
 .assistant-chat-body {
   flex: 1;
-  overflow-y: auto;
+  overflow-y: scroll;
   display: flex;
   flex-direction: column;
   gap: 16px;
   padding-right: 4px;
   min-height: 0;
+  user-select: text;
 }
 
 .assistant-chat-message {
@@ -433,6 +535,7 @@
   background: var(--bg-color);
   border: 1px solid var(--border-color);
   font-size: 14px;
+  user-select: text;
 }
 
 .assistant-chat-message.user .assistant-chat-bubble {
@@ -450,6 +553,29 @@
   display: flex;
   gap: 12px;
   align-items: flex-end;
+}
+
+.assistant-report-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.assistant-report-actions button {
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-color);
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
 }
 
 .assistant-chat-input textarea {
@@ -495,6 +621,16 @@
   font-size: 13px;
   text-align: center;
   padding: 12px 0;
+}
+
+@keyframes assistant-result-flash {
+  0%,
+  100% {
+    background: var(--bg-color);
+  }
+  50% {
+    background: rgba(24, 144, 255, 0.12);
+  }
 }
 
 @media (max-width: 1200px) {
