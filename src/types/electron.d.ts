@@ -709,6 +709,7 @@ export interface ElectronAPI {
         temperature?: number
         maxTokens?: number
         enableThinking?: boolean
+        disableTools?: boolean
       }
     }) => Promise<{
       success: boolean

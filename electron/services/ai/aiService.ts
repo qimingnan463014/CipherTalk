@@ -456,30 +456,24 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
    * 修复了 Ollama 不支持 enableThinking 参数导致的 400 错误
    */
   async chat(messages: any[], options: any = {}, onChunk?: (chunk: string) => void) {
-    // 1. 获取配置
-    const config = this.configService.getAIConfig()
-    if (!config.enabled) {
-      throw new Error('AI 服务未启用，请先在设置中开启')
+    const providerName = options.provider || this.configService.getAICurrentProvider() || 'zhipu'
+    const providerConfig = this.configService.getAIProviderConfig(providerName)
+    const apiKey = options.apiKey || providerConfig?.apiKey
+
+    if (!apiKey && providerName !== 'ollama') {
+      throw new Error('未配置API密钥')
     }
 
-    // 2. 获取服务商实例
-    const provider = this.getProvider(config.provider)
-    if (!provider) {
-      throw new Error('AI 服务商未初始化')
-    }
+    const provider = this.getProvider(providerName, apiKey)
+    const model = options.model || providerConfig?.model || provider.models[0] || ''
+    const isOllama = providerName === 'ollama' || provider.name === 'ollama'
 
-    // 3. 准备模型参数
-    const model = config.models[config.provider] || ''
-    
-    // 【核心修复】检查是不是 Ollama
-    const isOllama = config.provider === 'ollama' || provider.constructor.name.toLowerCase().includes('ollama');
-    
     const chatOptions = {
       model,
       temperature: options.temperature ?? 0.7,
-      // ⚠️ 强制修复：如果是 Ollama，绝对不传 enableThinking，防止报 400
+      maxTokens: options.maxTokens,
       enableThinking: isOllama ? false : (options.enableThinking ?? true),
-      ...options 
+      ...options
     }
 
     const toolSpec = {
@@ -563,6 +557,11 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
     }
 
     try {
+      if (options.disableTools) {
+        const content = await streamAssistantResponse(messages)
+        return { content }
+      }
+
       const toolDecision = await provider.chat(
         [{ role: 'system', content: toolPrompt }, ...messages],
         {
