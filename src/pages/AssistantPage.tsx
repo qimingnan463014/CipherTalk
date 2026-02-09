@@ -18,6 +18,7 @@ type ChatMessage = {
   content: string
   createdAt: number
   isStreaming?: boolean
+  payload?: SearchResultPayload[]
 }
 
 type SearchIntent = {
@@ -25,6 +26,15 @@ type SearchIntent = {
   startTime?: number
   endTime?: number
   summary: string
+}
+
+type SearchResultPayload = {
+  messageId: number
+  talkerId: string
+  content: string
+  timestamp: number
+  senderUsername?: string | null
+  isSend?: number | null
 }
 
 type SearchParseResult = {
@@ -216,7 +226,7 @@ function AssistantPage() {
   const assistantInputRef = useRef<HTMLTextAreaElement | null>(null)
   const assistantChatBodyRef = useRef<HTMLDivElement | null>(null)
 
-  const [assistantSearchResults, setAssistantSearchResults] = useState<AssistantMessage[]>([])
+  const [assistantSearchResults, setAssistantSearchResults] = useState<SearchResultPayload[]>([])
   const [assistantSearchLoading, setAssistantSearchLoading] = useState(false)
   const [assistantSearchError, setAssistantSearchError] = useState('')
   const [assistantSearchSummary, setAssistantSearchSummary] = useState('')
@@ -455,7 +465,7 @@ function AssistantPage() {
         keyword: parsed.keyword,
         startTime,
         endTime,
-        limit: 200,
+        limit: 1000,
         ...resolveSessionFilterPayload()
       })
 
@@ -543,7 +553,7 @@ function AssistantPage() {
         keyword: intent.keyword,
         startTime: intent.startTime,
         endTime: intent.endTime,
-        limit: 200,
+        limit: 1000,
         ...resolveSessionFilterPayload()
       })
 
@@ -553,7 +563,14 @@ function AssistantPage() {
         return []
       }
 
-      const resolvedResults = result.results || []
+      const resolvedResults = (result.results || []).map(item => ({
+        messageId: item.localId,
+        talkerId: item.sessionId,
+        content: item.parsedContent || item.rawContent,
+        timestamp: item.createTime,
+        senderUsername: item.senderUsername,
+        isSend: item.isSend
+      }))
       setAssistantSearchResults(resolvedResults)
       return resolvedResults
     } catch (e) {
@@ -617,10 +634,10 @@ function AssistantPage() {
     setAssistantAutoScroll(distanceFromBottom < 80)
   }
 
-  const handleResultJump = (result: AssistantMessage) => {
-    const key = `${result.sessionId}-${result.localId}-${result.sortSeq}`
+  const handleResultJump = (result: { talkerId: string; messageId: number }) => {
+    const key = `${result.talkerId}-${result.messageId}`
     setHighlightedResult(key)
-    window.electronAPI.window.openChatHistoryWindow(result.sessionId, result.localId)
+    window.electronAPI.chat.navigateToChat({ talkerId: result.talkerId, messageId: result.messageId })
     setTimeout(() => {
       setHighlightedResult(prev => (prev === key ? null : prev))
     }, 2000)
@@ -736,24 +753,11 @@ function AssistantPage() {
     }
   }
 
-  const sendAssistantMessage = async (content: string, options?: { enableSearchIntent?: boolean }) => {
+  const sendAssistantMessage = async (content: string) => {
     if (!content || assistantStreaming) return
-
-    if (options?.enableSearchIntent) {
-      let action: AssistantAction | null = null
-      try {
-        action = await parseAssistantAction(content)
-      } catch (error) {
-        action = null
-      }
-
-      const intent = action ? resolveSearchIntentFromAction(action, content) : detectSearchIntent(content)
-      if (intent) {
-        const results = await runAssistantSearch(intent)
-        await sendAssistantSummary(content, results)
-        return
-      }
-    }
+    setAssistantSearchResults([])
+    setAssistantSearchSummary('')
+    setAssistantSearchError('')
 
     const userMessage: ChatMessage = {
       id: `${Date.now()}-user`,
@@ -793,6 +797,13 @@ function AssistantPage() {
 
       if (!result.success) {
         setAssistantError(result.error || 'AI 响应失败')
+      } else if (result.payload && result.payload.length > 0) {
+        setAssistantMessages(prev => prev.map(msg => {
+          if (msg.id !== assistantMessage.id) return msg
+          return { ...msg, payload: result.payload }
+        }))
+        setAssistantSearchResults(result.payload)
+        setAssistantSearchSummary(`AI 检索结果 · ${result.payload.length} 条`)
       }
     } catch (e) {
       setAssistantError('AI 响应失败')
@@ -809,13 +820,13 @@ function AssistantPage() {
   const handleSendMessage = async () => {
     const content = assistantInput.trim()
     if (!content || assistantStreaming) return
-    await sendAssistantMessage(content, { enableSearchIntent: true })
+    await sendAssistantMessage(content)
     setAssistantInput('')
   }
 
   const handleSendReportPrompt = async () => {
     if (!reportPrompt || assistantStreaming) return
-    await sendAssistantMessage(reportPrompt, { enableSearchIntent: false })
+    await sendAssistantMessage(reportPrompt)
     setAssistantInput('')
   }
 
@@ -984,9 +995,9 @@ function AssistantPage() {
                 {searchResults.map(result => (
                   <button
                     type="button"
-                    key={`${result.sessionId}-${result.localId}-${result.sortSeq}`}
-                    className={`assistant-result-item ${highlightedResult === `${result.sessionId}-${result.localId}-${result.sortSeq}` ? 'highlighted' : ''}`}
-                    onClick={() => handleResultJump(result)}
+                    key={`${result.sessionId}-${result.localId}`}
+                    className={`assistant-result-item ${highlightedResult === `${result.sessionId}-${result.localId}` ? 'highlighted' : ''}`}
+                    onClick={() => handleResultJump({ talkerId: result.sessionId, messageId: result.localId })}
                   >
                     <div className="assistant-result-meta">
                       <span>{sessionNameMap.get(result.sessionId) || result.sessionId}</span>
@@ -1079,6 +1090,30 @@ function AssistantPage() {
                       __html: DOMPurify.sanitize(marked.parse(message.content || '...'))
                     }}
                   />
+                  {message.payload && message.payload.length > 0 && (
+                    <div className="assistant-chat-results">
+                      {message.payload.map(result => (
+                        <button
+                          type="button"
+                          key={`payload-${result.talkerId}-${result.messageId}`}
+                          className={`assistant-chat-result ${highlightedResult === `${result.talkerId}-${result.messageId}` ? 'highlighted' : ''}`}
+                          onClick={() => handleResultJump({ talkerId: result.talkerId, messageId: result.messageId })}
+                        >
+                          <div className="assistant-chat-result-avatar">
+                            {getAvatarText(result.senderUsername || sessionNameMap.get(result.talkerId) || result.talkerId)}
+                          </div>
+                          <div className="assistant-chat-result-body">
+                            <div className="assistant-chat-result-meta">
+                              <span>{result.senderUsername || (result.isSend ? '我' : sessionNameMap.get(result.talkerId) || result.talkerId)}</span>
+                              <span>{formatTime(result.timestamp)}</span>
+                            </div>
+                            <div className="assistant-chat-result-content">{result.content}</div>
+                            <span className="assistant-link">查看上下文</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="assistant-chat-time">
                     {message.isStreaming ? '生成中...' : new Date(message.createdAt).toLocaleTimeString()}
                   </div>
@@ -1120,15 +1155,15 @@ function AssistantPage() {
                 {!assistantSearchLoading && assistantSearchResults.map(result => (
                   <button
                     type="button"
-                    key={`assistant-${result.sessionId}-${result.localId}-${result.sortSeq}`}
-                    className={`assistant-result-item ${highlightedResult === `${result.sessionId}-${result.localId}-${result.sortSeq}` ? 'highlighted' : ''}`}
-                    onClick={() => handleResultJump(result)}
+                    key={`assistant-${result.talkerId}-${result.messageId}`}
+                    className={`assistant-result-item ${highlightedResult === `${result.talkerId}-${result.messageId}` ? 'highlighted' : ''}`}
+                    onClick={() => handleResultJump({ talkerId: result.talkerId, messageId: result.messageId })}
                   >
                     <div className="assistant-result-meta">
-                      <span>{sessionNameMap.get(result.sessionId) || result.sessionId}</span>
-                      <span>{result.senderUsername || (result.isSend ? '我' : '未知')} · {formatTime(result.createTime)}</span>
+                      <span>{sessionNameMap.get(result.talkerId) || result.talkerId}</span>
+                      <span>{result.senderUsername || (result.isSend ? '我' : '未知')} · {formatTime(result.timestamp)}</span>
                     </div>
-                    <div className="assistant-result-content">{result.parsedContent || result.rawContent}</div>
+                    <div className="assistant-result-content">{result.content}</div>
                     <span className="assistant-link">查看上下文</span>
                   </button>
                 ))}

@@ -16,6 +16,7 @@ import { CustomProvider, CustomMetadata } from './providers/custom'
 import { AIProvider } from './providers/base'
 import type { Message, Contact } from '../chatService'
 import { voiceTranscribeService } from '../voiceTranscribeService'
+import { wcdbService } from '../wcdbService'
 
 /**
  * 摘要选项
@@ -481,11 +482,87 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
       ...options 
     }
 
-    // 4. 发起流式对话
-    try {
-      await provider.streamChat(messages, chatOptions, (chunk) => {
+    const toolSpec = {
+      name: 'search_chat_history',
+      description: 'Search chat history from local database',
+      parameters: {
+        keywords: 'string',
+        start_date: 'YYYY-MM-DD',
+        end_date: 'YYYY-MM-DD',
+        contact_name: 'string'
+      }
+    }
+
+    const toolPrompt = `你是 CipherTalk 的工具调用助手。如果用户在询问聊天记录、对话、历史消息或业务往来，需要调用工具时，必须只输出以下 JSON：\n{"tool":"search_chat_history","arguments":{"keywords":"...","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","contact_name":"..."}}\n\n如果不需要调用工具，仅输出：{"tool":"none"}\n\n不要输出任何其他文字或 Markdown。`
+
+    const parseToolCall = (content: string) => {
+      const jsonBlock = content.match(/\{[\s\S]*\}/)?.[0]
+      if (!jsonBlock) return null
+      try {
+        const parsed = JSON.parse(jsonBlock)
+        if (parsed?.tool === toolSpec.name && parsed?.arguments) {
+          return parsed.arguments as {
+            keywords?: string
+            start_date?: string
+            end_date?: string
+            contact_name?: string
+          }
+        }
+        return null
+      } catch {
+        return null
+      }
+    }
+
+    const streamAssistantResponse = async (payloadMessages: any[]) => {
+      let fullContent = ''
+      await provider.streamChat(payloadMessages, chatOptions, (chunk) => {
+        fullContent += chunk
         if (onChunk) onChunk(chunk)
       })
+      return fullContent
+    }
+
+    try {
+      const toolDecision = await provider.chat(
+        [{ role: 'system', content: toolPrompt }, ...messages],
+        {
+          ...chatOptions,
+          temperature: 0
+        }
+      )
+
+      const toolArgs = parseToolCall(toolDecision)
+      if (!toolArgs) {
+        const content = await streamAssistantResponse(messages)
+        return { content }
+      }
+
+      const searchResult = await wcdbService.searchMessages({
+        keywords: toolArgs.keywords || '',
+        start_date: toolArgs.start_date,
+        end_date: toolArgs.end_date,
+        contact_name: toolArgs.contact_name
+      })
+
+      if (!searchResult.success) {
+        const content = await streamAssistantResponse([
+          ...messages,
+          { role: 'system', content: `工具 search_chat_history 调用失败：${searchResult.error || '未知错误'}。请提示用户稍后重试。` }
+        ])
+        return { content }
+      }
+
+      const records = searchResult.results || []
+      const limited = records.slice(0, 20)
+      const toolResultPrompt = `你已调用工具 search_chat_history，返回结果共 ${records.length} 条，以下为前 ${limited.length} 条：\n${JSON.stringify(limited)}\n\n请基于上述记录回答用户问题，先给出结论/数量，再按列表说明要点。若结果为空，明确说明未找到。`
+
+      const content = await streamAssistantResponse([
+        ...messages,
+        { role: 'system', content: toolResultPrompt }
+      ])
+
+      return { content, payload: records }
     } catch (error: any) {
       console.error('[AI Service] Chat Error:', error)
       if (error.message?.includes('400') && error.message?.includes('think')) {

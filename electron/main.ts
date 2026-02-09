@@ -1906,6 +1906,14 @@ function registerIpcHandlers() {
     return true
   })
 
+  ipcMain.handle('navigate-to-chat', async (_event, payload: { talkerId: string; messageId: number }) => {
+    const targetWindow = createChatWindow()
+    if (targetWindow && !targetWindow.isDestroyed()) {
+      targetWindow.webContents.send('chat:navigateToMessage', payload)
+    }
+    return true
+  })
+
   // 打开群聊分析窗口
   ipcMain.handle('window:openGroupAnalyticsWindow', async () => {
     createGroupAnalyticsWindow()
@@ -2902,14 +2910,14 @@ function registerIpcHandlers() {
   }) => {
     try {
       const { aiService } = await import('./services/ai/aiService')
-      await aiService.streamChat(
+      const result = await aiService.chat(
         payload.messages,
         payload.options || {},
         (chunk: string) => {
           event.sender.send('ai:assistantChunk', chunk)
         }
       )
-      return { success: true }
+      return { success: true, content: result?.content, payload: result?.payload }
     } catch (e) {
       console.error('[AI] 助理对话失败:', e)
       logService?.error('AI', '助理对话失败', { error: String(e) })

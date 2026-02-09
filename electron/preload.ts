@@ -228,7 +228,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       sessionIds?: string[]
       excludeSessionIds?: string[]
       limit?: number
+      offset?: number
     }) => ipcRenderer.invoke('chat:searchGlobalMessages', payload),
+    navigateToChat: (payload: { talkerId: string; messageId: number }) =>
+      ipcRenderer.invoke('navigate-to-chat', payload),
     getMessagesInRange: (payload: {
       startTime: number
       endTime: number
@@ -247,6 +250,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const listener = (_: any, data: any) => callback(data)
       ipcRenderer.on('chat:new-messages', listener)
       return () => ipcRenderer.removeListener('chat:new-messages', listener)
+    },
+    onNavigateToChat: (callback: (data: { talkerId: string; messageId: number }) => void) => {
+      const listener = (_: any, data: any) => callback(data)
+      ipcRenderer.on('chat:navigateToMessage', listener)
+      return () => ipcRenderer.removeListener('chat:navigateToMessage', listener)
     }
   },
 
