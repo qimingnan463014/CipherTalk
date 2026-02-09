@@ -486,14 +486,13 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
       name: 'search_chat_history',
       description: 'Search chat history from local database',
       parameters: {
-        keywords: 'string',
-        start_date: 'YYYY-MM-DD',
-        end_date: 'YYYY-MM-DD',
+        keyword: 'string',
+        date_range: 'string',
         contact_name: 'string'
       }
     }
 
-    const toolPrompt = `你是 CipherTalk 的工具调用助手。如果用户在询问聊天记录、对话、历史消息或业务往来，需要调用工具时，必须只输出以下 JSON：\n{"tool":"search_chat_history","arguments":{"keywords":"...","start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","contact_name":"..."}}\n\n如果不需要调用工具，仅输出：{"tool":"none"}\n\n不要输出任何其他文字或 Markdown。`
+    const toolPrompt = `你是 CipherTalk 的工具调用助手。如果用户在询问聊天记录、对话、历史消息或业务往来，需要调用工具时，必须只输出以下 JSON：\n{"tool":"search_chat_history","arguments":{"keyword":"...","date_range":"last week/7days/YYYY-MM-DD~YYYY-MM-DD","contact_name":"..."}}\n\n如果不需要调用工具，仅输出：{"tool":"none"}\n\n不要输出任何其他文字或 Markdown。`
 
     const parseToolCall = (content: string) => {
       const jsonBlock = content.match(/\{[\s\S]*\}/)?.[0]
@@ -502,7 +501,9 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
         const parsed = JSON.parse(jsonBlock)
         if (parsed?.tool === toolSpec.name && parsed?.arguments) {
           return parsed.arguments as {
+            keyword?: string
             keywords?: string
+            date_range?: string
             start_date?: string
             end_date?: string
             contact_name?: string
@@ -512,6 +513,44 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
       } catch {
         return null
       }
+    }
+
+    const resolveDateRange = (dateRange?: string) => {
+      if (!dateRange) return null
+      const normalized = dateRange.trim().toLowerCase()
+      if (!normalized) return null
+
+      const explicit = normalized.match(/(\d{4}-\d{2}-\d{2})\s*(?:~|to|至)\s*(\d{4}-\d{2}-\d{2})/)
+      if (explicit) {
+        return { startDate: explicit[1], endDate: explicit[2] }
+      }
+
+      if (/(last week|近一周|上周)/.test(normalized)) {
+        const end = new Date()
+        const start = new Date()
+        start.setDate(end.getDate() - 7)
+        return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) }
+      }
+
+      if (/(last month|近一月|近一个月|上个月)/.test(normalized)) {
+        const end = new Date()
+        const start = new Date()
+        start.setDate(end.getDate() - 30)
+        return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) }
+      }
+
+      const relativeMatch = normalized.match(/(\d+)\s*(day|days|d|天)/)
+      if (relativeMatch) {
+        const days = Number(relativeMatch[1])
+        if (!Number.isNaN(days) && days > 0) {
+          const end = new Date()
+          const start = new Date()
+          start.setDate(end.getDate() - days)
+          return { startDate: start.toISOString().slice(0, 10), endDate: end.toISOString().slice(0, 10) }
+        }
+      }
+
+      return null
     }
 
     const streamAssistantResponse = async (payloadMessages: any[]) => {
@@ -538,10 +577,14 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
         return { content }
       }
 
+      const resolvedRange = resolveDateRange(toolArgs.date_range)
+      const startDate = toolArgs.start_date || resolvedRange?.startDate
+      const endDate = toolArgs.end_date || resolvedRange?.endDate
+
       const searchResult = await wcdbService.searchMessages({
-        keywords: toolArgs.keywords || '',
-        start_date: toolArgs.start_date,
-        end_date: toolArgs.end_date,
+        keywords: toolArgs.keyword || toolArgs.keywords || '',
+        start_date: startDate,
+        end_date: endDate,
         contact_name: toolArgs.contact_name
       })
 
@@ -554,7 +597,7 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
       }
 
       const records = searchResult.results || []
-      const limited = records.slice(0, 20)
+      const limited = records.slice(0, 30)
       const toolResultPrompt = `你已调用工具 search_chat_history，返回结果共 ${records.length} 条，以下为前 ${limited.length} 条：\n${JSON.stringify(limited)}\n\n请基于上述记录回答用户问题，先给出结论/数量，再按列表说明要点。若结果为空，明确说明未找到。`
 
       const content = await streamAssistantResponse([

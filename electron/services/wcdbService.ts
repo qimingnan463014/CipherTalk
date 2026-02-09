@@ -351,7 +351,7 @@ export class WcdbService {
         startTime,
         endTime,
         sessionIds,
-        limit: params.limit ?? 2000,
+        limit: params.limit ?? 5000,
         offset: params.offset
       })
 

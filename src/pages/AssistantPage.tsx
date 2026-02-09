@@ -637,7 +637,7 @@ function AssistantPage() {
   const handleResultJump = (result: { talkerId: string; messageId: number }) => {
     const key = `${result.talkerId}-${result.messageId}`
     setHighlightedResult(key)
-    window.electronAPI.chat.navigateToChat({ talkerId: result.talkerId, messageId: result.messageId })
+    window.electronAPI.chat.jumpToMessage({ talkerId: result.talkerId, messageId: result.messageId })
     setTimeout(() => {
       setHighlightedResult(prev => (prev === key ? null : prev))
     }, 2000)
