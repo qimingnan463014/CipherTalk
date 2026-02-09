@@ -1914,6 +1914,14 @@ function registerIpcHandlers() {
     return true
   })
 
+  ipcMain.handle('jump-to-message', async (_event, payload: { talkerId: string; messageId: number }) => {
+    const targetWindow = createChatWindow()
+    if (targetWindow && !targetWindow.isDestroyed()) {
+      targetWindow.webContents.send('chat:navigateToMessage', payload)
+    }
+    return true
+  })
+
   // 打开群聊分析窗口
   ipcMain.handle('window:openGroupAnalyticsWindow', async () => {
     createGroupAnalyticsWindow()

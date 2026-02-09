@@ -282,6 +282,7 @@ export interface ElectronAPI {
       error?: string
     }>
     navigateToChat: (payload: { talkerId: string; messageId: number }) => Promise<boolean>
+    jumpToMessage: (payload: { talkerId: string; messageId: number }) => Promise<boolean>
     getMessagesInRange: (payload: {
       startTime: number
       endTime: number

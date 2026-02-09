@@ -1576,7 +1576,7 @@ function ChatPage(_props: ChatPageProps) {
 
                     // 系统消息居中显示
                     const wrapperClass = isSystem ? 'system' : (isSent ? 'sent' : 'received')
-                    const highlightClass = msg.localId === highlightMessageId ? 'highlighted' : ''
+                    const highlightClass = msg.localId === highlightMessageId ? 'highlight-flash' : ''
 
                     return (
                       <div

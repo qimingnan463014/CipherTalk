@@ -232,6 +232,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }) => ipcRenderer.invoke('chat:searchGlobalMessages', payload),
     navigateToChat: (payload: { talkerId: string; messageId: number }) =>
       ipcRenderer.invoke('navigate-to-chat', payload),
+    jumpToMessage: (payload: { talkerId: string; messageId: number }) =>
+      ipcRenderer.invoke('jump-to-message', payload),
     getMessagesInRange: (payload: {
       startTime: number
       endTime: number

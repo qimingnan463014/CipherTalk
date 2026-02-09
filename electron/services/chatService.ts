@@ -1769,13 +1769,15 @@ class ChatService extends EventEmitter {
       }
 
       const offset = options.offset ?? 0
-      const limit = options.limit ?? 2000
+      const limit = options.limit ?? 5000
       const targetSessions = await this.resolveTargetSessions(options.sessionIds, options.excludeSessionIds)
       if (targetSessions.length === 0) {
         return { success: true, results: [] }
       }
 
-      const perSessionLimit = Math.min(1000, Math.max(50, Math.ceil((limit + offset) / targetSessions.length) + 50))
+      const perSessionLimit = limit > 0
+        ? Math.max(100, Math.ceil((limit + offset) / targetSessions.length) + 100)
+        : undefined
       const allResults: AssistantMessage[] = []
       const searchTerm = `%${keyword}%`
 
@@ -1817,25 +1819,31 @@ class ChatService extends EventEmitter {
                      FROM ${tableName} m
                      LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
                      WHERE ${conditions.join(' AND ')}
-                     ORDER BY m.create_time DESC, m.sort_seq DESC
-                     LIMIT ?`
-              const rows = db.prepare(sql).all(myRowId, ...params, perSessionLimit) as any[]
+                     ORDER BY m.create_time DESC, m.sort_seq DESC`
+              if (perSessionLimit) {
+                sql += ' LIMIT ?'
+              }
+              const rows = db.prepare(sql).all(myRowId, ...params, ...(perSessionLimit ? [perSessionLimit] : [])) as any[]
               rows.forEach(row => allResults.push(this.buildAssistantMessage(row, sessionId)))
             } else if (hasName2IdTable) {
               sql = `SELECT m.*, n.user_name AS sender_username
                      FROM ${tableName} m
                      LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
                      WHERE ${conditions.join(' AND ')}
-                     ORDER BY m.create_time DESC, m.sort_seq DESC
-                     LIMIT ?`
-              const rows = db.prepare(sql).all(...params, perSessionLimit) as any[]
+                     ORDER BY m.create_time DESC, m.sort_seq DESC`
+              if (perSessionLimit) {
+                sql += ' LIMIT ?'
+              }
+              const rows = db.prepare(sql).all(...params, ...(perSessionLimit ? [perSessionLimit] : [])) as any[]
               rows.forEach(row => allResults.push(this.buildAssistantMessage(row, sessionId)))
             } else {
               sql = `SELECT * FROM ${tableName}
                      WHERE ${conditions.join(' AND ')}
-                     ORDER BY create_time DESC, sort_seq DESC
-                     LIMIT ?`
-              const rows = db.prepare(sql).all(...params, perSessionLimit) as any[]
+                     ORDER BY create_time DESC, sort_seq DESC`
+              if (perSessionLimit) {
+                sql += ' LIMIT ?'
+              }
+              const rows = db.prepare(sql).all(...params, ...(perSessionLimit ? [perSessionLimit] : [])) as any[]
               rows.forEach(row => allResults.push(this.buildAssistantMessage(row, sessionId)))
             }
           } catch (e) {
@@ -1854,7 +1862,7 @@ class ChatService extends EventEmitter {
 
       deduped.sort((a, b) => b.createTime - a.createTime || b.sortSeq - a.sortSeq)
 
-      return { success: true, results: deduped.slice(offset, offset + limit) }
+      return { success: true, results: limit > 0 ? deduped.slice(offset, offset + limit) : deduped.slice(offset) }
     } catch (e) {
       console.error('ChatService: 全局搜索失败:', e)
       return { success: false, error: String(e) }
