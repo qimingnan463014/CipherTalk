@@ -3,6 +3,8 @@ import fs from 'fs'
 import path from 'path'
 import type { ConfigService } from './config'
 import type { LogService } from './logService'
+import { voiceTranscribeService } from './voiceTranscribeService'
+import { voiceTranscribeServiceWhisper } from './voiceTranscribeServiceWhisper'
 
 export type AssistantFilterMode = 'all' | 'whitelist' | 'blacklist'
 
@@ -32,6 +34,7 @@ type ChatService = {
     limit?: number
   }) => Promise<{ success: boolean; messages?: any[]; error?: string }>
   getSessions: () => Promise<{ success: boolean; sessions?: Array<{ username: string; displayName?: string }>; error?: string }>
+  getVoiceData?: (sessionId: string, msgId: string, createTime?: number) => Promise<{ success: boolean; data?: string; error?: string }>
 }
 
 const DEFAULT_SCHEDULE: AssistantScheduleConfig = {
@@ -187,6 +190,7 @@ export class AssistantReportService {
       }
 
       const messages = messagesResult.messages || []
+      await this.ensureVoiceTranscripts(chatService, messages, logService)
       const sessionsResult = await chatService.getSessions()
       const sessionNameMap = new Map(
         sessionsResult.success && sessionsResult.sessions
@@ -255,6 +259,46 @@ export class AssistantReportService {
     })
 
     return `请根据以下聊天记录生成最近 ${config.rangeDays} 天的业务总结日报，输出：\n\n1. 关键进展（按客户/项目/群组归类）\n2. 重要决策/结论\n3. 待办清单（包含负责人、截止时间，如未明确则标注待确认）\n4. 风险/异常点与需要跟进的问题\n\n要求：\n- 只基于记录事实，不要臆测\n- 无价值寒暄可忽略\n- 输出清晰的标题与列表\n\n聊天记录：\n${lines.join('\n')}`
+  }
+
+  private async ensureVoiceTranscripts(chatService: ChatService, messages: any[], logService?: LogService) {
+    const voiceMessages = messages.filter((msg) => msg.localType === 34 && (!msg.parsedContent || msg.parsedContent === '[语音消息]'))
+    if (voiceMessages.length === 0) return
+
+    if (!chatService.getVoiceData) {
+      logService?.warn('AssistantReport', 'ChatService 未提供 getVoiceData，无法转写语音消息')
+      return
+    }
+
+    const sttMode = this.configService.get('sttMode') || 'cpu'
+    const whisperModelType = this.configService.get('whisperModelType') || 'small'
+
+    for (const msg of voiceMessages) {
+      try {
+        const cached = voiceTranscribeService.getCachedTranscript(msg.sessionId, msg.createTime)
+        if (cached) {
+          msg.parsedContent = cached
+          continue
+        }
+
+        const voiceResult = await chatService.getVoiceData(msg.sessionId, String(msg.localId), msg.createTime)
+        if (!voiceResult.success || !voiceResult.data) continue
+
+        const wavData = Buffer.from(voiceResult.data, 'base64')
+        const result = sttMode === 'gpu'
+          ? await voiceTranscribeServiceWhisper.transcribeWavBuffer(wavData, whisperModelType, 'auto')
+          : await voiceTranscribeService.transcribeWithCache(wavData, msg.sessionId, msg.createTime)
+
+        if (result.success && result.transcript) {
+          if (sttMode === 'gpu') {
+            voiceTranscribeService.saveTranscriptCache(msg.sessionId, msg.createTime, result.transcript)
+          }
+          msg.parsedContent = result.transcript
+        }
+      } catch (error) {
+        logService?.warn('AssistantReport', '语音转写失败，已跳过', { error: String(error), sessionId: msg.sessionId, localId: msg.localId })
+      }
+    }
   }
 }
 

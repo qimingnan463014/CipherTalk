@@ -301,10 +301,11 @@ export class WcdbService {
    * 搜索聊天记录（用于 AI 工具调用）
    */
   async searchMessages(params: {
-    keywords: string
+    keywords: string | string[]
     start_date?: string
     end_date?: string
     contact_name?: string
+    action?: 'transfer' | 'msg'
     limit?: number
     offset?: number
   }): Promise<{
@@ -320,7 +321,15 @@ export class WcdbService {
     error?: string
   }> {
     try {
-      const keyword = params.keywords?.trim()
+      const keywordList = Array.isArray(params.keywords)
+        ? params.keywords.map(item => item.trim()).filter(Boolean)
+        : params.keywords.split(/\s+/).map(item => item.trim()).filter(Boolean)
+
+      if (params.action === 'transfer') {
+        keywordList.push('转账')
+      }
+
+      const keyword = Array.from(new Set(keywordList)).join(' ')
       if (!keyword) {
         return { success: true, results: [] }
       }

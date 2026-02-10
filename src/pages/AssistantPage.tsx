@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Bot, CalendarRange, ChevronDown, ClipboardCopy, Filter, ListTodo, Search, Send, Sparkles, ArrowLeft, Check, FileDown } from 'lucide-react'
+import { Bot, CalendarRange, ClipboardCopy, Filter, ListTodo, Search, Send, Sparkles, ArrowLeft, FileDown } from 'lucide-react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { useChatStore } from '../stores/chatStore'
+import { useAssistantStore } from '../stores/assistantStore'
 import { getAiEnableThinking, getAiModel, getAiProvider, getAiProviderConfig } from '../services/config'
 import { getAIProviders } from '../types/ai'
+import DataFilterPanel from '../components/Assistant/DataFilterPanel'
 
 import type { AssistantMessage } from '../types/assistant'
 import './AssistantPage.scss'
-
-type FilterMode = 'all' | 'whitelist' | 'blacklist'
 
 type SearchIntent = {
   keyword: string
@@ -144,12 +144,6 @@ function loadReportRange() {
   return getDefaultReportRange()
 }
 
-function getAvatarText(name: string) {
-  const trimmed = name.trim()
-  if (!trimmed) return '#'
-  return trimmed.slice(0, 1).toUpperCase()
-}
-
 function detectSearchIntent(query: string): SearchIntent | null {
   const cleaned = query.trim()
   if (!cleaned) return null
@@ -215,11 +209,7 @@ function resolveIntentDateRange(intentRange?: AssistantTimeRange, fallbackQuery?
 function AssistantPage() {
   const navigate = useNavigate()
   const { sessions, setSessions } = useChatStore()
-  const [sessionQuery, setSessionQuery] = useState('')
-  const [filterMode, setFilterMode] = useState<FilterMode>('all')
-  const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
-  const [friendGroupCollapsed, setFriendGroupCollapsed] = useState(false)
-  const [groupGroupCollapsed, setGroupGroupCollapsed] = useState(false)
+  const { filterMode, selectedSessionIds } = useAssistantStore()
 
   const [searchKeyword, setSearchKeyword] = useState('')
   const [searchLoading, setSearchLoading] = useState(false)
@@ -305,20 +295,6 @@ function AssistantPage() {
   const isGroupChat = (sessionId: string) => sessionId.includes('@chatroom')
   const getSessionTypeLabel = (sessionId: string) => (isGroupChat(sessionId) ? '群聊' : '私聊')
 
-  const filteredSessions = useMemo(() => {
-    const keyword = sessionQuery.trim().toLowerCase()
-    if (!keyword) return sessions
-    return sessions.filter(session =>
-      (session.displayName || session.username).toLowerCase().includes(keyword)
-    )
-  }, [sessions, sessionQuery])
-
-  const groupedSessions = useMemo(() => {
-    const friendSessions = filteredSessions.filter(session => !isGroupChat(session.username))
-    const groupSessions = filteredSessions.filter(session => isGroupChat(session.username))
-    return { friendSessions, groupSessions }
-  }, [filteredSessions])
-
   useEffect(() => {
     localStorage.setItem(reportRangeStorageKey, JSON.stringify({
       startDate: reportStartDate,
@@ -326,32 +302,12 @@ function AssistantPage() {
     }))
   }, [reportStartDate, reportEndDate])
 
-  const toggleSession = (sessionId: string) => {
-    setSelectedSessions(prev => {
-      const next = new Set(prev)
-      if (next.has(sessionId)) {
-        next.delete(sessionId)
-      } else {
-        next.add(sessionId)
-      }
-      return next
-    })
-  }
-
-  const handleSelectAll = () => {
-    setSelectedSessions(new Set(filteredSessions.map(session => session.username)))
-  }
-
-  const handleClearSelection = () => {
-    setSelectedSessions(new Set())
-  }
-
   const resolveSessionFilterPayload = () => {
     if (filterMode === 'whitelist') {
-      return { sessionIds: Array.from(selectedSessions) }
+      return { sessionIds: selectedSessionIds }
     }
     if (filterMode === 'blacklist') {
-      return { excludeSessionIds: Array.from(selectedSessions) }
+      return { excludeSessionIds: selectedSessionIds }
     }
     return {}
   }
@@ -810,8 +766,8 @@ function AssistantPage() {
         const scopeLabel = filterMode === 'all'
           ? '全部会话'
           : filterMode === 'whitelist'
-            ? `白名单(${selectedSessions.size})`
-            : `黑名单(${selectedSessions.size})`
+            ? `白名单(${selectedSessionIds.length})`
+            : `黑名单(${selectedSessionIds.length})`
         summaryParts.push(scopeLabel)
 
         await runAssistantSearch({
@@ -840,8 +796,8 @@ function AssistantPage() {
         const scopeLabel = filterMode === 'all'
           ? '全部会话'
           : filterMode === 'whitelist'
-            ? `白名单(${selectedSessions.size})`
-            : `黑名单(${selectedSessions.size})`
+            ? `白名单(${selectedSessionIds.length})`
+            : `黑名单(${selectedSessionIds.length})`
         setAssistantTaskSummary(`日报范围：${startDate === endDate ? startDate : `${startDate} - ${endDate}`} · ${scopeLabel}`)
         await runReportOutput(prompt)
         return
@@ -902,98 +858,7 @@ function AssistantPage() {
               <h2>数据范围与过滤</h2>
             </div>
             <div className="assistant-card-body assistant-card-body--sessions">
-              <div className="assistant-filter-row">
-                <label>
-                  模式
-                  <select value={filterMode} onChange={(e) => setFilterMode(e.target.value as FilterMode)}>
-                    <option value="all">全部会话</option>
-                    <option value="whitelist">白名单模式</option>
-                    <option value="blacklist">黑名单模式</option>
-                  </select>
-                </label>
-                <label>
-                  会话搜索
-                  <input
-                    value={sessionQuery}
-                    onChange={(e) => setSessionQuery(e.target.value)}
-                    placeholder="搜索联系人或群名称"
-                  />
-                </label>
-              </div>
-              <div className="assistant-filter-actions">
-                <button type="button" onClick={handleSelectAll}>全选当前列表</button>
-                <button type="button" onClick={handleClearSelection}>清空选择</button>
-                <span>已选 {selectedSessions.size} 个会话</span>
-              </div>
-              <div className="assistant-session-groups">
-                <div className="assistant-session-group">
-                  <button
-                    type="button"
-                    className="assistant-session-group-header"
-                    onClick={() => setFriendGroupCollapsed(prev => !prev)}
-                  >
-                    <span>Friend Chats</span>
-                    <span className="assistant-session-count">{groupedSessions.friendSessions.length}</span>
-                    <ChevronDown size={16} className={friendGroupCollapsed ? 'collapsed' : ''} />
-                  </button>
-                  <div className={`assistant-session-group-body ${friendGroupCollapsed ? 'collapsed' : ''}`}>
-                    {groupedSessions.friendSessions.map(session => (
-                      <button
-                        key={session.username}
-                        type="button"
-                        className={`assistant-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}
-                        onClick={() => toggleSession(session.username)}
-                      >
-                        <span className="assistant-session-avatar">
-                          {getAvatarText(session.displayName || session.username)}
-                        </span>
-                        <span className="assistant-session-name">{session.displayName || session.username}</span>
-                        <span className={`assistant-session-check ${selectedSessions.has(session.username) ? 'checked' : ''}`}>
-                          <Check size={14} />
-                        </span>
-                      </button>
-                    ))}
-                    {groupedSessions.friendSessions.length === 0 && (
-                      <div className="assistant-empty">暂无匹配的好友会话</div>
-                    )}
-                  </div>
-                </div>
-                <div className="assistant-session-group">
-                  <button
-                    type="button"
-                    className="assistant-session-group-header"
-                    onClick={() => setGroupGroupCollapsed(prev => !prev)}
-                  >
-                    <span>Group Chats</span>
-                    <span className="assistant-session-count">{groupedSessions.groupSessions.length}</span>
-                    <ChevronDown size={16} className={groupGroupCollapsed ? 'collapsed' : ''} />
-                  </button>
-                  <div className={`assistant-session-group-body ${groupGroupCollapsed ? 'collapsed' : ''}`}>
-                    {groupedSessions.groupSessions.map(session => (
-                      <button
-                        key={session.username}
-                        type="button"
-                        className={`assistant-session-item ${selectedSessions.has(session.username) ? 'selected' : ''}`}
-                        onClick={() => toggleSession(session.username)}
-                      >
-                        <span className="assistant-session-avatar">
-                          {getAvatarText(session.displayName || session.username)}
-                        </span>
-                        <span className="assistant-session-name">{session.displayName || session.username}</span>
-                        <span className={`assistant-session-check ${selectedSessions.has(session.username) ? 'checked' : ''}`}>
-                          <Check size={14} />
-                        </span>
-                      </button>
-                    ))}
-                    {groupedSessions.groupSessions.length === 0 && (
-                      <div className="assistant-empty">暂无匹配的群聊会话</div>
-                    )}
-                  </div>
-                </div>
-                {filteredSessions.length === 0 && (
-                  <div className="assistant-empty">暂无匹配的会话</div>
-                )}
-              </div>
+              <DataFilterPanel sessions={sessions} />
             </div>
           </section>
 

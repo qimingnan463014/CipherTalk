@@ -487,6 +487,7 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
     }
 
     const toolPrompt = `你是 CipherTalk 的工具调用助手。如果用户在询问聊天记录、对话、历史消息或业务往来，需要调用工具时，必须只输出以下 JSON：\n{"tool":"search_chat_history","arguments":{"keyword":"...","date_range":"last week/7days/YYYY-MM-DD~YYYY-MM-DD","contact_name":"..."}}\n\n如果不需要调用工具，仅输出：{"tool":"none"}\n\n不要输出任何其他文字或 Markdown。`
+    const intentPrompt = `Analyze the user's input. If it is a query about chat history, extract parameters into JSON: { "type": "search", "keywords": string[], "dateRange": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" }, "targetUser": string, "action": "transfer" | "msg" }. If it's general chat, return null. Only output JSON or null.`
 
     const parseToolCall = (content: string) => {
       const jsonBlock = content.match(/\{[\s\S]*\}/)?.[0]
@@ -507,6 +508,55 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
       } catch {
         return null
       }
+    }
+
+    const parseIntentCall = (content: string) => {
+      const trimmed = content.trim()
+      if (!trimmed || trimmed === 'null') return null
+      const jsonBlock = trimmed.match(/\{[\s\S]*\}/)?.[0]
+      if (!jsonBlock) return null
+      try {
+        const parsed = JSON.parse(jsonBlock)
+        if (parsed?.type === 'search') {
+          return parsed as {
+            type: 'search'
+            keywords?: string[]
+            dateRange?: { start?: string; end?: string }
+            targetUser?: string
+            action?: 'transfer' | 'msg'
+          }
+        }
+        return null
+      } catch {
+        return null
+      }
+    }
+
+    const resolveIntentDateRange = (dateRange?: { start?: string; end?: string }, fallbackQuery?: string) => {
+      if (dateRange?.start || dateRange?.end) {
+        return { startDate: dateRange?.start, endDate: dateRange?.end }
+      }
+
+      if (!fallbackQuery) return {}
+
+      const normalized = fallbackQuery.trim().toLowerCase()
+      const relativeMatch = normalized.match(/(last|近|最近)?\s*(\d+|两|二)\s*(day|days|天)/)
+      if (relativeMatch) {
+        const rawValue = relativeMatch[2]
+        const days = rawValue === '两' || rawValue === '二' ? 2 : Number(rawValue)
+        if (!Number.isNaN(days) && days > 0) {
+          const now = new Date()
+          const start = new Date(now)
+          start.setDate(now.getDate() - days)
+          const startDate = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+          return {
+            startDate: startDate.toISOString().slice(0, 10),
+            endDate: now.toISOString().slice(0, 10)
+          }
+        }
+      }
+
+      return {}
     }
 
     const resolveDateRange = (dateRange?: string) => {
@@ -557,6 +607,43 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
     }
 
     try {
+      if (!options.disableTools) {
+        const lastUserMessage = [...messages].reverse().find(msg => msg.role === 'user')
+        if (lastUserMessage?.content) {
+          const intentDecision = await provider.chat(
+            [
+              { role: 'system', content: intentPrompt },
+              { role: 'user', content: lastUserMessage.content }
+            ],
+            { ...chatOptions, temperature: 0, maxTokens: 200 }
+          )
+
+          const intent = parseIntentCall(intentDecision)
+          if (intent?.type === 'search') {
+            const resolvedRange = resolveIntentDateRange(intent.dateRange, lastUserMessage.content)
+            const searchResult = await wcdbService.searchMessages({
+              keywords: intent.keywords || [],
+              start_date: resolvedRange.startDate,
+              end_date: resolvedRange.endDate,
+              contact_name: intent.targetUser,
+              action: intent.action
+            })
+
+            if (!searchResult.success) {
+              const content = await streamAssistantResponse([
+                ...messages,
+                { role: 'system', content: `检索失败：${searchResult.error || '未知错误'}。请提示用户稍后重试。` }
+              ])
+              return { content }
+            }
+
+            const records = searchResult.results || []
+            const content = `已为你检索到 ${records.length} 条相关记录。`
+            return { content, payload: records }
+          }
+        }
+      }
+
       if (options.disableTools) {
         const content = await streamAssistantResponse(messages)
         return { content }
