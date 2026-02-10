@@ -448,6 +448,30 @@ export class VoiceTranscribeService {
     }
 
     /**
+     * 转写并写入缓存（优先读取缓存）
+     */
+    async transcribeWithCache(
+        wavData: Buffer,
+        sessionId: string,
+        createTime: number,
+        onPartial?: (text: string) => void,
+        force: boolean = false
+    ): Promise<{ success: boolean; transcript?: string; error?: string; cached?: boolean }> {
+        if (!force) {
+            const cached = this.getCachedTranscript(sessionId, createTime)
+            if (cached) {
+                return { success: true, transcript: cached, cached: true }
+            }
+        }
+
+        const result = await this.transcribeWavBuffer(wavData, onPartial)
+        if (result.success && result.transcript) {
+            this.saveTranscriptCache(sessionId, createTime, result.transcript)
+        }
+        return { ...result, cached: false }
+    }
+
+    /**
      * 下载文件到本地
      */
     private downloadToFile(
