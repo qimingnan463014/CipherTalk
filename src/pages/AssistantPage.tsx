@@ -36,7 +36,7 @@ type AssistantTarget = {
 
 type AssistantDateRange = {
   type?: 'dynamic' | 'static'
-  value?: 'last_month' | 'today' | 'last_7_days' | 'custom'
+  value?: 'today' | 'yesterday' | 'last_12_hours' | 'last_7_days' | 'last_month' | 'custom'
   start?: string
   end?: string
 }
@@ -45,7 +45,7 @@ type AssistantParams = {
   keywords?: string[]
   target?: AssistantTarget
   dateRange?: AssistantDateRange
-  action_type?: 'transfer' | 'msg' | 'todo'
+  action_type?: 'transfer' | 'msg' | 'todo' | 'summary'
 }
 
 type AssistantIntent = {
@@ -55,9 +55,9 @@ type AssistantIntent = {
 }
 
 const assistantReportPrompt = `你是 CipherTalk 的个人业务助理，擅长从聊天记录中提炼关键信息、输出日报总结、列出待办与风险提醒。请始终使用中文输出，结构清晰，优先使用要点列表与表格。`
-const assistantIntentPrompt = `你不仅是 CipherTalk 的自然语言控制器，更是用户的全能业务助理。你的核心目标是打破会话隔离，通过全局检索和智能分析帮助用户处理业务。
+const assistantIntentPrompt = `你不仅是 CipherTalk 的 AI 助理，更是用户的全能业务特助。你的核心目标是打破会话隔离，通过全局检索和智能分析帮助用户处理业务。
 
-请分析用户的输入，精准识别其意图，并严格输出以下 JSON 格式（不要包含任何解释文本）：
+请仔细分析用户的自然语言指令，严格按照以下 JSON 格式输出意图（不要包含 Markdown 或解释）：
 
 {
   "intent": "search" | "report" | "export" | "chat",
@@ -65,42 +65,54 @@ const assistantIntentPrompt = `你不仅是 CipherTalk 的自然语言控制器�
     "keywords": ["关键词1", "关键词2"],
     "target": {
       "type": "all" | "whitelist" | "blacklist" | "specific",
-      "names": ["张三", "客户群"]
+      "names": ["张三", "客户群A"]
     },
     "dateRange": {
-      "type": "dynamic" | "static",
-      "value": "last_month" | "today" | "last_7_days" | "custom",
-      "start": "YYYY-MM-DD (可选)",
-      "end": "YYYY-MM-DD (可选)"
+      "type": "dynamic",
+      "value": "today" | "yesterday" | "last_12_hours" | "last_7_days" | "last_month" | "custom",
+      "start": "YYYY-MM-DD (当 value 为 custom 时必填)",
+      "end": "YYYY-MM-DD (当 value 为 custom 时必填)"
     },
-    "action_type": "transfer" | "msg" | "todo"
+    "action_type": "transfer" | "msg" | "todo" | "summary"
   },
-  "reply": "仅在 intent 为 chat 时使用，用于简短回复用户闲聊"
+  "reply": "仅在 intent 为 chat 时使用，用于回复用户的闲聊"
 }
 
-### 意图判断规则：
-1. **全局搜索 (Search)**：
-   - 用户查找特定信息（如“谁欠我钱”、“上周的报价”、“搜索关于合同的记录”）。
-   - 默认打破会话隔离，除非用户指定“在张三的对话里搜”。
-   - 关键词提取要精准，过滤掉“帮我搜”、“查一下”等指令词。
+### 意图判断与业务规则：
 
-2. **日报/总结 (Report)**：
-   - 用户要求总结工作、生成日报、列出待办（如“今天的日报”、“总结一下昨天客户群的消息”）。
-   - 必须解析时间范围（默认今天）。
-   - 必须解析过滤模式（如“只看客户” = whitelist，“不看闲聊” = blacklist）。
+1.  全局穿透检索 (intent: "search")
+    - 场景：用户找具体的事实、记录、转账、报价。
+    - 规则：默认打破会话隔离 (target.type: "all")。
+    - 关键词：如果用户问“我和谁转过账”，keywords 应包含 ["转账", "红包", "交易"]，action_type 设为 "transfer"。
 
-3. **导出 (Export)**：
-   - 用户明确要求导出文件、保存结果。
+2.  智能日报/总结 (intent: "report")
+    - 场景：用户说“生成日报”、“总结今天”、“看看刚才有什么事”。
+    - 规则：
+      - "今天日报" -> value: "today"
+      - "刚才半天/最近半天" -> value: "last_12_hours"
+      - "只看客户群" -> target.type: "whitelist"
+      - "别管闲聊群" -> target.type: "blacklist"
+    - 注意：不要担心语音，系统会自动将时间范围内的语音转为文字供你分析。
 
-### 示例：
-Input: "近一个月我和谁转过账？"
-Output: {"intent":"search","params":{"keywords":["转账","交易","收款"],"target":{"type":"all"},"dateRange":{"type":"dynamic","value":"last_month"},"action_type":"transfer"}}
+3.  数据导出 (intent: "export")
+    - 场景：用户明确提到“导出”、“保存文件”、“生成表格”。
 
-Input: "帮我总结一下今天白名单群里的重要事项，生成日报"
-Output: {"intent":"report","params":{"target":{"type":"whitelist"},"dateRange":{"type":"dynamic","value":"today"}}}
+4.  闲聊 (intent: "chat")
+    - 场景：用户打招呼，或者指令不包含任何业务意图。
 
-Input: "搜索上周五到现在关于'发票'的记录"
-Output: {"intent":"search","params":{"keywords":["发票"],"dateRange":{"type":"dynamic","value":"custom","start":"2023-XX-XX","end":"2023-XX-XX"},"target":{"type":"all"}}}`
+### 示例 (Few-Shot)：
+
+User: "近一个月我和谁转过账？"
+Output: {"intent":"search","params":{"keywords":["转账","收款","红包","交易"],"target":{"type":"all"},"dateRange":{"type":"dynamic","value":"last_month"},"action_type":"transfer"}}
+
+User: "生成今天的日报，只看'核心客户群'和'老板'，把语音也听一下"
+Output: {"intent":"report","params":{"target":{"type":"whitelist","names":["核心客户群","老板"]},"dateRange":{"type":"dynamic","value":"today"},"action_type":"summary"}}
+
+User: "帮我搜一下上周五到现在，有没有人提到'发票'或者'开票'"
+Output: {"intent":"search","params":{"keywords":["发票","开票"],"target":{"type":"all"},"dateRange":{"type":"dynamic","value":"custom","start":"2023-XX-XX(上周五日期)","end":"2023-XX-XX(今天日期)"}}}
+
+User: "最近12小时有什么重要消息？"
+Output: {"intent":"report","params":{"target":{"type":"all"},"dateRange":{"type":"dynamic","value":"last_12_hours"}}}`
 const reportRangeStorageKey = 'assistant-report-range'
 
 function formatDateInput(date: Date) {
@@ -220,6 +232,21 @@ function resolveIntentDateRange(intentRange?: AssistantDateRange, fallbackQuery?
   if (intentRange?.value === 'today') {
     const today = formatDateInput(new Date())
     return { startDate: today, endDate: today, label: '今天' }
+  }
+  if (intentRange?.value === 'yesterday') {
+    const yesterday = new Date()
+    yesterday.setDate(yesterday.getDate() - 1)
+    const date = formatDateInput(yesterday)
+    return { startDate: date, endDate: date, label: '昨天' }
+  }
+  if (intentRange?.value === 'last_12_hours') {
+    const end = new Date()
+    const start = new Date(end.getTime() - 12 * 60 * 60 * 1000)
+    return {
+      startDate: formatDateInput(start),
+      endDate: formatDateInput(end),
+      label: '近12小时'
+    }
   }
   if (intentRange?.value === 'last_7_days') {
     const days = 7
@@ -434,7 +461,13 @@ function AssistantPage() {
         return []
       }
 
-      const resolvedResults = (result.results || []).map(item => ({
+      let rawMessages = result.results || []
+      const hasVoice = rawMessages.some(item => item.localType === 34)
+      if (hasVoice) {
+        rawMessages = await transcribeVoiceMessages(rawMessages)
+      }
+
+      const resolvedResults = rawMessages.map(item => ({
         messageId: item.localId,
         talkerId: item.sessionId,
         content: item.parsedContent || item.rawContent,
